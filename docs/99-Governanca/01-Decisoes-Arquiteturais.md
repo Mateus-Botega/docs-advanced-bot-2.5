@@ -200,3 +200,66 @@ Esta seção lista as decisões críticas mapeadas no inventário inicial que ex
 **Decisão Recomendada:** Alternativa 2. A injeção direta de configurações proxy no *socket* de cada bot reforça o isolamento estrito proposto na DEC-09.
 
 **Impacto na Implementação Java:** A parametrização de rede do bot necessitará de campos explícitos para configurações de Proxy. A arquitetura deverá permitir flexibilidade para uma futura adição de *pools* automáticos e rotação de IPs.
+
+---
+
+### DEC-11 — Idioma de Nomenclatura de Classes
+
+**Contexto:** O [12-Guia-de-Nomenclatura.md](12-Guia-de-Nomenclatura.md) exigia nomes de classes Java exclusivamente em inglês. Ao iniciar a Milestone 3 (Migração do Núcleo do Domínio), o responsável pelo projeto solicitou nomes de classes em português.
+
+**Problema Atual:** Divergência entre a governança aprovada (nomes em inglês) e a preferência explícita do responsável pelo projeto para o código de domínio.
+
+**Alternativas Possíveis:**
+1. Manter nomes de classes em inglês, conforme guia original.
+2. Adotar nomes de classes em português em todo o código Java, atualizando o guia de nomenclatura.
+
+**Decisão Tomada:** Alternativa 2. Nomes de **classes, interfaces, enums e records** passam a ser escritos em português. Nomes de **pacotes, métodos, variáveis e constantes** permanecem em inglês, conforme o guia original (nenhuma solicitação de alteração para esses itens).
+
+**Justificativa:** Preferência explícita do responsável pelo projeto (Mateus Botega), aprovada em sessão de 2026-07-15, para iniciar a Milestone 3.
+
+**Impacto na Implementação Java:** Atualiza a seção "Idioma Oficial" do [12-Guia-de-Nomenclatura.md](12-Guia-de-Nomenclatura.md). Aplica-se a todo código Java escrito a partir desta decisão; classes já existentes (ex: `AdvancedBotApplication`) não são renomeadas retroativamente sem necessidade funcional.
+
+**Data:** 2026-07-15
+
+**Responsável:** Mateus Botega
+
+---
+
+### DEC-12 — Estrutura de Pacotes: Camadas Clean Architecture
+
+**Contexto:** O [08-Fundacao-Arquitetural-Java.md](08-Fundacao-Arquitetural-Java.md) definia uma estrutura de pacotes orientada a features (`core`, `network`, `protocol`, `bot`, `pathfinding`, `inventory`, `automation`, `proxy`, `scheduler`, `persistence`, `api`), sem pacotes explícitos de camada (`domain`, `application`, `infrastructure`, `interfaces`). Isso diverge do princípio já fixado no CLAUDE.md e na Decisão Arquitetural Congelada "Clean + Hexagonal", que exige preservar a separação entre domínio, aplicação, infraestrutura e interfaces.
+
+**Problema Atual:** Ao iniciar a Milestone 3 (primeiras entidades, Value Objects e Use Cases do domínio), não havia pacote `domain` nem `application` onde alocar esse código sem violar a estrutura já aprovada.
+
+**Alternativas Possíveis:**
+1. Manter a estrutura orientada a features do 08-Fundacao, alocando entidades em `core` e casos de uso dentro do próprio pacote `bot`.
+2. Reestruturar os pacotes em camadas Clean Architecture (`domain`, `application`, `infrastructure`, `interfaces`), mantendo os nomes de features já documentados como subpacotes dentro de cada camada.
+
+**Decisão Tomada:** Alternativa 2. A estrutura esperada passa a ser:
+
+```
+com.advancedbot
+ ├── domain            # Entidades, Value Objects, regras de negócio puras (antigo "core")
+ │    ├── bot
+ │    ├── network
+ │    ├── protocol
+ │    ├── pathfinding
+ │    ├── inventory
+ │    └── automation
+ ├── application       # Casos de uso / orquestração de regras de domínio
+ │    └── usecase
+ ├── infrastructure    # Persistência, proxy, scheduler, configuração, logs
+ │    ├── persistence
+ │    ├── proxy
+ │    └── scheduler
+ └── interfaces        # Controllers / API exposta para front-end e dashboard
+      └── api
+```
+
+**Justificativa:** Alinha a estrutura física de pacotes ao princípio Clean + Hexagonal já congelado, sem descartar nenhum dos módulos de feature já documentados no 08-Fundacao (apenas os reorganiza como subpacotes de camada). Aprovada explicitamente pelo responsável pelo projeto para desbloquear a Milestone 3.
+
+**Impacto na Implementação Java:** Atualiza a seção "2. Estrutura Inicial do Projeto Maven" do [08-Fundacao-Arquitetural-Java.md](08-Fundacao-Arquitetural-Java.md). Módulos ainda não criados (network, protocol, pathfinding, etc.) adotam a nova estrutura ao serem implementados em milestones futuras; nenhum código existente precisa ser movido nesta sessão.
+
+**Data:** 2026-07-15
+
+**Responsável:** Mateus Botega

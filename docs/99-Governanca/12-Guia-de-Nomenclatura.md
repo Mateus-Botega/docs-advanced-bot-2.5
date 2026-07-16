@@ -58,7 +58,9 @@ ReconnectController
 
 Toda a documentação deve ser escrita em português.
 
-Todo o código Java deve utilizar nomes em inglês.
+Classes, interfaces, enums e records Java devem utilizar nomes em português (DEC-11).
+
+Pacotes, métodos, variáveis e constantes permanecem em inglês.
 
 ## Documentação
 
@@ -77,13 +79,21 @@ Sistema de Inventário
 Exemplo:
 
 ```
-InventoryManager
+GerenciadorInventario
 
-FishingController
+ControladorPesca
 
-ReconnectService
+ServicoReconexao
 
-PacketReader
+LeitorPacote
+```
+
+Métodos e variáveis continuam em inglês:
+
+```
+processInventory()
+
+reconnectService.execute()
 ```
 
 ---
@@ -228,6 +238,8 @@ Nunca utilizar caracteres especiais.
 
 As classes devem representar exatamente sua responsabilidade.
 
+Nomes em português (DEC-11).
+
 Formato
 
 ```
@@ -237,21 +249,19 @@ Substantivo
 Exemplo
 
 ```
-InventoryManager
+GerenciadorInventario
 
-PlayerController
+ControladorJogador
 
-PacketDecoder
+DecodificadorPacote
 
-FishingController
+ControladorPesca
 
-EntityTracker
+RastreadorEntidade
 
-ReconnectService
+ServicoReconexao
 
-WindowManager
-
-MinecraftClient
+GerenciadorJanela
 ```
 
 Evitar verbos.

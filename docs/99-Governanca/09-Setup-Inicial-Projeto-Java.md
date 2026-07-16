@@ -12,7 +12,7 @@ O objetivo desta fase foi estabelecer a fundação inicial, em branco (greenfiel
 
 ## 2. Estrutura Criada
 
-Foi inicializado um novo projeto Maven no diretório `/advancedbot-java`, vizinho ao projeto C# legado. A arquitetura de pacotes foi definida exatamente como estipulado no documento `08-Fundacao-Arquitetural-Java.md`.
+Foi inicializado um novo projeto Maven no diretório `C:\Users\Administrator\Desktop\ADVs\ProjetosBot\advancedbot-java`, vizinho ao projeto C# legado. A arquitetura de pacotes foi definida exatamente como estipulado no documento `08-Fundacao-Arquitetural-Java.md`.
 
 A hierarquia final inicial é:
 
@@ -85,7 +85,7 @@ A execução deste setup passa no crivo da governança estabelecida:
 
 ### Itens Bloqueados / Limitações
 
-*   **Virtual Threads (ADR-003 / Java 21):** O projeto foi atualizado para referenciar a propriedade `<java.version>21</java.version>`, conforme estabelecido pela decisão arquitetural oficial registrada em `10-Correcao-Baseline-Java21.md`.
+*   **Virtual Threads (DEC-03 / Java 21):** O uso de Virtual Threads exige Java 21 LTS (Project Loom), sendo incompatível com a especificação temporária anterior baseada no Java 17 (versão na qual Virtual Threads ainda não estavam disponíveis de forma estável). A correção do baseline de JDK 17 para JDK 21 remove essa restrição histórica e viabiliza a execução assíncrona concorrente dos bots.
 *   **Ambiente do usuário:** Se o Maven não estiver disponível no PATH local, recomenda-se que seja instalado (ou que se adicione o Maven Wrapper nas próximas etapas) para a execução fluida dos testes de contexto e rotinas de build.
 
 ---

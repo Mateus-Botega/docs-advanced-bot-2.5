@@ -25,21 +25,25 @@ O sistema é dividido estritamente entre Core (regras de negócio puras, entidad
 
 O projeto adotará uma estrutura multi-module no Maven (ou organização de pacotes estrita em monorepo) orientada a domínio e infraestrutura.
 
-**Estrutura de Pacotes Esperada:**
+**Estrutura de Pacotes Esperada (atualizada pela DEC-12 — camadas Clean Architecture):**
 
 ```text
 com.advancedbot
- ├── core              # Entidades, regras de negócio puras, interfaces de domínio
- ├── network           # Conexão TCP, pipelines de I/O, gerenciamento de sessão
- ├── protocol          # Definição e serialização/desserialização de Packets
- ├── bot               # Bot Engine, ciclo de vida, máquina de estados principal
- ├── pathfinding       # Algoritmos de navegação e locomoção pelo mundo
- ├── inventory         # Gerenciamento de itens, menus e baús virtuais
- ├── automation        # Macros e tarefas automatizadas (farm, pesca, etc.)
- ├── proxy             # Gerenciamento, validação e roteamento de proxies
- ├── scheduler         # Agendamento de tarefas e timers
- ├── persistence       # Acesso a banco de dados, arquivos locais, repositórios
- └── api               # Controladores e APIs de exposição para front-end/dashboard
+ ├── domain            # Entidades, Value Objects, regras de negócio puras (antigo "core")
+ │    ├── bot          # Bot Engine, ciclo de vida, máquina de estados principal
+ │    ├── network      # Conexão TCP, pipelines de I/O, gerenciamento de sessão
+ │    ├── protocol     # Definição e serialização/desserialização de Packets
+ │    ├── pathfinding  # Algoritmos de navegação e locomoção pelo mundo
+ │    ├── inventory    # Gerenciamento de itens, menus e baús virtuais
+ │    └── automation   # Macros e tarefas automatizadas (farm, pesca, etc.)
+ ├── application       # Casos de uso / orquestração de regras de domínio
+ │    └── usecase
+ ├── infrastructure    # Persistência, proxy, scheduler, configuração, logs
+ │    ├── persistence  # Acesso a banco de dados, arquivos locais, repositórios
+ │    ├── proxy        # Gerenciamento, validação e roteamento de proxies
+ │    └── scheduler    # Agendamento de tarefas e timers
+ └── interfaces        # Controladores e APIs de exposição para front-end/dashboard
+      └── api
 ```
 
 ---
@@ -85,7 +89,7 @@ A plataforma será dividida logicamente nas seguintes camadas principais:
 
 Os seguintes padrões oficiais devem ser respeitados rigorosamente em todo o código Java:
 
-*   **Linguagem:** Java 21 (versão oficial definida para a plataforma Java).
+*   **Linguagem:** Java 21 LTS como versão oficial.
 *   **Framework Principal:** Spring Boot (aplicável para a camada de gerenciamento, API e orquestração de beans, evitando acoplar os bots diretamente aos ciclos web).
 *   **Injeção de Dependência:** Obrigatório. Sem singletons estáticos, usar construtores injetados.
 *   **Configuração:** Centralizada via `application.yml` (Spring) ou arquivos YAML mapeados.
@@ -93,7 +97,7 @@ Os seguintes padrões oficiais devem ser respeitados rigorosamente em todo o có
 *   **Build System:** Maven.
 *   **Boilerplate:** Uso do Lombok está aprovado para `@Getter`, `@Setter`, `@Builder`, etc., mantendo o código limpo.
 *   **Imutabilidade:** Uso de `Records` onde fizer sentido (ex: DTOs de Packets e Eventos estáticos).
-*   **Concorrência:** Utilização de Virtual Threads (se executando em JVM compatível/Java 21) ou *Thread Pools* assíncronas dedicadas onde houver ganho real de I/O não bloqueante.
+*   **Concorrência:** Utilização de Virtual Threads (habilitada nativamente no Java 21 LTS) ou *Thread Pools* assíncronas dedicadas onde houver ganho real de I/O não bloqueante.
 
 ---
 
