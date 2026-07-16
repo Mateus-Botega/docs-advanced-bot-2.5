@@ -23,7 +23,7 @@ A migração foi dividida em fases progressivas para garantir que a rede e a bas
 |---|---|---|---|
 | 1 | Fundação do projeto Java | Estrutura Maven/Spring Boot, YAML (DEC-05) | Não Iniciado |
 | 2 | Motor do Bot isolado | Core Domain, Virtual Threads (DEC-03), CLI | Não Iniciado |
-| 3 | Sistema de conexão Minecraft | Protocol Layer 1.8 (DEC-01), Handshake | Não Iniciado |
+| 3 | Sistema de conexão Minecraft | Protocol Layer 1.8 (DEC-01), Handshake | Concluído (Milestone 4, ver [11-Estado-Atual-Migracao.md](11-Estado-Atual-Migracao.md)) |
 | 4 | Gerenciamento de sessão | Autenticação, Injeção Proxy Socket (DEC-10) | Não Iniciado |
 | 5 | Eventos e pacotes | Serialização/Deserialização, BouncyCastle (DEC-04) | Não Iniciado |
 | 6 | Sistema de comandos | Core de Comandos, Chat, Movimentação Básica | Não Iniciado |
