@@ -1,6 +1,6 @@
 # 11 - Estado Atual da Migração
 
-> Última atualização: 2026-07-20
+> Última atualização: 2026-07-21
 >
 > Documento responsável por registrar o estado oficial da migração do AdvancedBot C# para Java.
 >
@@ -1460,6 +1460,706 @@ Candidatos não comprometidos, a critério do responsável do projeto: restante 
 
 ---
 
+## Milestone 9
+
+Status
+
+CONCLUÍDA — Incrementos 9.1 (DEC-22), 9.2 (Movimentação) e 9.3 (Rotação) concluídos.
+
+Objetivo
+
+Implementar as capacidades fundamentais de envio de ações do jogador (movimento e rotação) do bot para o servidor — sem automação, física ou Tick loop — para reutilização futura por comandos, macros, scripts e inteligência do bot.
+
+### Incremento 9.1 — DEC-22: Ações Fundamentais do Jogador (Movimentação e Rotação)
+
+Status
+
+Concluído
+
+Objetivo
+
+Analisar a arquitetura existente (`SessaoDeJogo`, `ConexaoMinecraft`, DEC-19/20/21, `RegistroDePacotesV1_8`) e o legado C# (`MinecraftClient.Tick()`, `PacketPlayerPos`/`PacketPlayerLook`/`PacketPosAndLook`/`PacketUpdate`) para decidir como as ações de movimento/rotação do jogador devem ser modeladas, antes de implementar qualquer Packet novo.
+
+Resultado
+
+Aprovado (ver [DEC-22](01-Decisoes-Arquiteturais.md))
+
+Entregue
+
+- **DEC-22**: formaliza que a Milestone 9 implementa exclusivamente a capacidade de envio explícito e sob demanda de ações de movimento/rotação (via Caso de Uso, seguindo o fluxo da DEC-21), nunca o Tick loop automático do legado (motor de física, permanece fora de escopo e não bloqueia mais o candidato "movimentação livre do bot" registrado na Milestone 5/8, já que o bloqueio sempre foi sobre a automação, não sobre a capacidade de envio). Decide reaproveitar `ConfirmacaoDePosicaoPacket`/`ConfirmacaoDePosicaoCodec` (id `0x06` SERVERBOUND, já registrado) para qualquer futuro caso combinado de posição+rotação em vez de introduzir uma segunda classe na mesma chave — `RegistroDePacotesV1_8.registrar` indexa um único `Codec` por `(EstadoConexao, id, SentidoDoPacote)`, e `TransporteSocket.send` resolve o `Codec` de envio só por essa chave, nunca por `Class`; uma segunda classe no id `0x06` sobrescreveria silenciosamente o `Codec` do eco de confirmação já validado. Decide mutação otimista de estado (`SessaoDeJogo.x/y/z/yaw/pitch` atualizados no envio, mesmo padrão já usado por `atualizarPosicao`). `Player` (id `0x03`, somente `OnGround`) permanece deliberadamente fora do escopo — ligado ao Tick automático do legado, sem precedente de uso isolado.
+
+Observação de escopo
+
+Exclusivamente documental — nenhuma classe, teste ou linha de código de produção foi criada ou alterada nesta fase.
+
+Validação executada
+
+Não aplicável a código (fase exclusivamente documental).
+
+### Incremento 9.2 — Movimentação do Jogador
+
+Status
+
+Concluído
+
+Objetivo
+
+Implementar o pacote Player Position (`0x04`, PLAY/SERVERBOUND), permitindo que `SessaoDeJogo` envie a posição do bot ao servidor sob demanda, conforme DEC-22.
+
+Análise do legado
+
+`MinecraftClient.Tick()` envia `PacketPlayerPos` (`X`, `FeetY`, `Z`, `OnGround`) quando só a posição mudou no tick. `SessaoDeJogo.y` já armazena a coordenada de pés diretamente (populada por `PlayerPositionAndLookPacket` clientbound, sem offset de olho), logo `x`/`y`/`z` mapeiam 1:1 para o formato de fio, sem a conversão `FeetY = Y - 1.62` que o C# aplica sobre seu próprio `Player.PosY` (rastreado como olho internamente no legado).
+
+Entregue
+
+- `domain.protocol.v1_8.PlayerPositionPacket`/`PlayerPositionCodec`/`PlayerPositionHandler`/`EventoPlayerPosition` (PLAY, id `0x04`, SERVERBOUND).
+- `domain.bot.SessaoDeJogo.mover(double x, double y, double z, boolean onGround)` — muta `x`/`y`/`z` (mutação otimista, DEC-22) e envia `PlayerPositionPacket`.
+- `application.usecase.CasoDeUsoMoverJogador` (novo) — segue o padrão da DEC-21: recebe `Bot`, valida `getSessaoDeJogo() != null`, chama `sessaoDeJogo.mover(...)`.
+- `infrastructure.protocol.v1_8.RegistroDePacotesV1_8` e `infrastructure.network.v1_8.AdaptadorConexaoBotV1_8` atualizados com `PlayerPositionPacket` (id `0x04` SERVERBOUND — sem colisão com `EntityEquipmentPacket`, que usa o mesmo id `0x04` mas CLIENTBOUND, validado por teste dedicado).
+
+Restrições respeitadas
+
+Nenhuma física, nenhum Tick automático, nenhuma validação de limites de movimento (velocidade, colisão) — envio explícito e sob demanda apenas, conforme DEC-22.
+
+### Incremento 9.3 — Rotação do Jogador (Look)
+
+Status
+
+Concluído
+
+Objetivo
+
+Implementar o pacote Player Look (`0x05`, PLAY/SERVERBOUND), seguindo exatamente o mesmo padrão arquitetural do Incremento 9.2.
+
+Análise do legado
+
+`MinecraftClient.Tick()` envia `PacketPlayerLook` (`Yaw`, `Pitch`, `OnGround`) quando só a rotação mudou no tick — sem nenhuma conversão de campo (diferente de posição, `Yaw`/`Pitch` não têm equivalente ao offset olho/pés).
+
+Entregue
+
+- `domain.protocol.v1_8.PlayerLookPacket`/`PlayerLookCodec`/`PlayerLookHandler`/`EventoPlayerLook` (PLAY, id `0x05`, SERVERBOUND).
+- `domain.bot.SessaoDeJogo.olhar(float yaw, float pitch, boolean onGround)` — muta `yaw`/`pitch` (mutação otimista, DEC-22) e envia `PlayerLookPacket`.
+- `application.usecase.CasoDeUsoRotacionarJogador` (novo) — mesmo padrão de `CasoDeUsoMoverJogador`.
+- `infrastructure.protocol.v1_8.RegistroDePacotesV1_8` e `infrastructure.network.v1_8.AdaptadorConexaoBotV1_8` atualizados com `PlayerLookPacket` (id `0x05` SERVERBOUND, sem colisão).
+
+Restrições respeitadas
+
+Idênticas ao Incremento 9.2.
+
+Riscos e observações (Incrementos 9.2 e 9.3)
+
+- Mutação otimista de estado assume que o servidor aceita o movimento/rotação enviados; se o servidor corrigir (anti-cheat), a próxima `PlayerPositionAndLookPacket` clientbound já sobrescreve `x`/`y`/`z`/`yaw`/`pitch` corretamente via `atualizarPosicao` (comportamento pré-existente, nenhuma reconciliação nova foi necessária).
+- Nenhum método combinado "mover e olhar" iniciado pelo bot foi criado — registrado na DEC-22 que, se necessário no futuro, deve reaproveitar `ConfirmacaoDePosicaoPacket`/`ConfirmacaoDePosicaoCodec` (id `0x06`), nunca uma nova classe.
+- `Player` (id `0x03`, bare `OnGround`) permanece deliberadamente não implementado — ligado ao Tick automático do legado, sem pedido nesta milestone.
+
+Validação executada (Incrementos 9.2 e 9.3, implementados na mesma sessão)
+
+`mvn clean test` (JDK 21.0.9, Maven 3.9.7) — BUILD SUCCESS, **511 testes executados, 0 falhas, 3 skipped deliberadamente** (mesmos 3 já registrados desde incrementos anteriores). Mudança 100% aditiva: nenhuma interface já aprovada foi alterada, nenhum teste pré-existente foi modificado.
+
+Próximo passo sugerido
+
+Candidatos não comprometidos, a critério do responsável do projeto: restante da Milestone 7 (Update Sign, World Border, Update Block Entity, Block Action, Block Break Animation); combinação posição+rotação reaproveitando `ConfirmacaoDePosicaoPacket` (ver DEC-22), se houver necessidade real; `Player` bare (id `0x03`). Combate/automação/física continuam fora de escopo por política do projeto — Milestone 9 não implementou Tick loop nem motor de física, só a capacidade de envio sob demanda. Nenhuma DEC pendente bloqueia os candidatos remanescentes.
+
+---
+
+## Milestone 10
+
+Status
+
+CONCLUÍDA — Incrementos 10.1 (planejamento), 10.2 (Swing Arm), 10.3 (Player Digging) e 10.4 (Player Block Placement) concluídos.
+
+Objetivo
+
+Implementar as primeiras interações do jogador com o mundo (balançar braço, escavar bloco, colocar bloco) seguindo exatamente o fluxo de ação iniciada pelo bot já formalizado pela DEC-21/DEC-22 — sem mineração automática, sem física, sem lógica de inventário automático.
+
+### Incremento 10.1 — Planejamento Arquitetural
+
+Status
+
+Concluído
+
+Objetivo
+
+Analisar arquitetura atual (DEC-19/20/21/22, `SessaoDeJogo`, `RegistroDePacotesV1_8`), legado oficial (`Projeto Adv 2.4.5`) e protocolo 47 antes de implementar Swing Arm, Player Digging e Player Block Placement.
+
+Análise
+
+1. **Integração com a arquitetura atual:** as três ações são 100% instâncias do fluxo já formalizado pela DEC-21 (`CasoDeUso → SessaoDeJogo → ConexaoMinecraft → Packet → Servidor`), sem nenhuma reação a protocolo envolvida (nenhuma delas tem contrapartida CLIENTBOUND relevante ao domínio do bot nesta milestone).
+2. **Responsabilidades de `SessaoDeJogo`:** único tradutor entre intenção de domínio e protocolo (mesmo papel já fixado pela DEC-19/DEC-21) — ganha métodos de intenção pontuais (`balancarBraco`, `iniciarQuebraDeBloco`/`cancelarQuebraDeBloco`/`finalizarQuebraDeBloco`, `colocarBloco`), nenhum estado observável novo (diferente da Milestone 9, nenhuma das três ações tem um campo cliente-autoritativo análogo a `x`/`y`/`z`/`yaw`/`pitch` para mutar).
+3. **Casos de Uso exigidos:** um por ação externa ao protocolo, mesmo critério da DEC-21. Cinco no total: `CasoDeUsoBalancarBraco`, `CasoDeUsoIniciarQuebraDeBloco`, `CasoDeUsoCancelarQuebraDeBloco`, `CasoDeUsoFinalizarQuebraDeBloco`, `CasoDeUsoColocarBloco` — um Caso de Uso por método de intenção (mesmo padrão 1:1 já usado por `CasoDeUsoMoverJogador`/`CasoDeUsoRotacionarJogador`/`CasoDeUsoEnviarMensagemDeChat`, preferido a um único Caso de Uso com 3 métodos para Player Digging, mantendo a consistência já estabelecida em vez de abrir uma exceção pontual).
+4. **Novos agregados:** nenhum. Nenhuma das três ações produz estado observável que justifique um novo agregado (diferente de Mundo/Inventário/Entidades/ListaDeJogadores, que existem porque há estado real a rastrear).
+5. **Novos Ports:** nenhum. As três ações usam a `ConexaoMinecraft` já retida desde o login (DEC-19), mesmo critério explícito da DEC-21 ("Critérios para NÃO Criar Novos Ports").
+6. **Novas DEC:** nenhuma necessária. DEC-21 já cobre integralmente o padrão de "ação iniciada pelo bot"; DEC-22 já cobre o precedente de reaproveitar/estender `RegistroDePacotesV1_8` sem colisão. Nenhuma das três ações introduz uma questão estrutural nova (nenhum reaproveitamento forçado de `Packet` por colisão de chave, nenhuma mutação de estado otimista) que exigisse uma decisão nova — ver item 8 para a única sutileza tratada (sentinela de Block Placement), resolvida sem alterar nenhum contrato.
+7. **Padrões reutilizados:** fluxo `CasoDeUso → SessaoDeJogo → Packet` (DEC-21); empacotamento de `Position` (long com x 26 bits/y 12 bits/z 26 bits) já usado por `BlockChangeCodec`/`MultiBlockChangeCodec`; formato `Slot`/`ItemStack` (`ItemStackCodec`) já usado por `WindowItems`/`SetSlot`/`EntityEquipment`; registro de Handler mesmo sem Receptor para pacotes puramente SERVERBOUND, mesmo precedente de `EnvioDeChatPacket`/`PlayerPositionPacket`/`PlayerLookPacket` ("uniformidade/testabilidade").
+8. **Divergências entre legado e protocolo:** nenhuma divergência real de campos/ordem/tipos — o legado (`PacketSwingArm.cs`, `PacketPlayerDigging.cs`/`DiggingStatus.cs`, `PacketBlockPlace.cs`) bate exatamente com a especificação oficial do protocolo 47 para os três pacotes. Uma sutileza de fidelidade foi identificada e resolvida (não é divergência entre legado e protocolo, é uma nuance de encoding): o valor sentinela `x=y=z=-1`/`direction=-1` do Player Block Placement ("usar item na mão sem bloco-alvo") exige extensão de sinal do campo `y` (12 bits) na decodificação — diferente de `BlockChangeCodec`, que nunca precisou disso porque `y` ali nunca é negativo. Documentado no Codec, sem necessidade de DEC (não altera nenhum contrato público, é uma correção de fidelidade interna ao novo Codec).
+9. **Divisão em incrementos:** 10.1 (este, planejamento) → 10.2 (Swing Arm) → 10.3 (Player Digging: início/cancelamento/término, sem mineração automática) → 10.4 (Player Block Placement, sem lógica de inventário automático).
+
+Resultado
+
+Aprovado. Nenhuma DEC nova, nenhum Port novo, nenhum agregado novo — escopo 100% coberto pelos padrões já formalizados nas DEC-19/20/21/22.
+
+Observação de escopo
+
+Exclusivamente documental — nenhuma classe, teste ou linha de código de produção foi criada ou alterada nesta fase.
+
+### Incremento 10.2 — Swing Arm
+
+Status
+
+Concluído
+
+Objetivo
+
+Implementar o pacote Animation (`0x0A`, PLAY/SERVERBOUND) — ação de balançar o braço, sem nenhum campo no protocolo 47.
+
+Análise do legado
+
+`PacketSwingArm.cs`: para `client.Version >= v1_8`, o pacote é serializado **sem nenhum campo** — apenas o VarInt do id. O campo `EntityID` só existe no fallback para protocolo pré-1.8 (não aplicável aqui). Nome de classe em português (`BalancarBracoPacket`, não `AnimationPacket`) porque o protocolo reutiliza "Animation" nas duas direções — `AnimationPacket` já está registrado para o Entity Animation CLIENTBOUND (`0x0B`, Milestone 5 Incremento 6.4); usar o mesmo nome colidiria como classe Java no pacote `domain.protocol.v1_8` (mesmo critério já usado por `EnvioDeChatPacket`/`ConfirmacaoDePosicaoPacket`/`RespostaKeepAlivePacket`).
+
+Entregue
+
+- `domain.protocol.v1_8.BalancarBracoPacket`/`BalancarBracoCodec`/`BalancarBracoHandler`/`EventoBalancarBraco` (PLAY, id `0x0A`, SERVERBOUND, sem campos).
+- `domain.bot.SessaoDeJogo.balancarBraco()` — sem mutação de estado (nenhum campo observável associado), apenas `conexao.send(new BalancarBracoPacket())`.
+- `application.usecase.CasoDeUsoBalancarBraco` (conforme DEC-21).
+- `infrastructure.protocol.v1_8.RegistroDePacotesV1_8` e `infrastructure.network.v1_8.AdaptadorConexaoBotV1_8.handlersV1_8()` atualizados com `BalancarBracoPacket` (id `0x0A` SERVERBOUND — sem colisão, nenhum pacote CLIENTBOUND ocupa `0x0A` nesta milestone).
+
+Testes
+
+`BalancarBracoCodecTest` (round-trip vazio), `BalancarBracoHandlerTest`, `CasoDeUsoBalancarBracoTest` (sucesso + `IllegalStateException` sem sessão), `SessaoDeJogoTest.deveBalancarBracoEnviandoOPacketSemCampos`, cenário de pipeline completa (`PipelineDeProtocoloV1_8Test`), teste de integração ponta a ponta sobre socket loopback real (`AdaptadorConexaoBotV1_8Test.deveEnviarBalancarBracoAoServidorAoChamarBalancarBracoNaSessaoDeJogo`), e localização por id/registro (`RegistroDePacotesV1_8Test`).
+
+### Incremento 10.3 — Player Digging
+
+Status
+
+Concluído
+
+Objetivo
+
+Implementar o pacote Player Digging (`0x07`, PLAY/SERVERBOUND) — início, cancelamento e término de escavação, sem mineração automática.
+
+Análise do legado
+
+`PacketPlayerDigging.cs`/`DiggingStatus.cs`: `status` (byte) + `location` (Position, long empacotado 26/12/26) + `face` (byte), nessa ordem — idêntico à especificação oficial do protocolo 47. O enum `DiggingStatus` do legado tem 6 valores (`StartedDigging=0`, `CancelledDigging=1`, `FinishedDigging=2`, `DropItemStack=3`, `DropItem=4`, `FinishUse=5`); toda a lógica de automação de mineração (`AutoMiner.cs`, `DiggingHelper.cs` — cálculo de força de quebra vs. dureza do bloco, ferramenta, encantamentos, efeitos de poção) vive fora da classe de pacote e **não foi portada**, conforme instrução explícita desta milestone.
+
+Entregue
+
+- `domain.protocol.v1_8.PlayerDiggingPacket`/`PlayerDiggingCodec`/`PlayerDiggingHandler`/`EventoPlayerDigging` (PLAY, id `0x07`, SERVERBOUND; campo `status` cru, sem enum — mesmo critério já usado por `ChangeGameStatePacket.razao`; Codec fiel a todos os 6 valores possíveis de status, mesmo que só 3 tenham método de intenção).
+- `domain.bot.SessaoDeJogo`: `iniciarQuebraDeBloco(x,y,z,face)` (status 0), `cancelarQuebraDeBloco(x,y,z,face)` (status 1), `finalizarQuebraDeBloco(x,y,z,face)` (status 2) — três métodos de intenção, sem mutação de estado (nenhum campo observável de "bloco sendo escavado" foi criado; automação/timing de quebra é exatamente o que fica de fora, conforme instrução).
+- `application.usecase.CasoDeUsoIniciarQuebraDeBloco`, `CasoDeUsoCancelarQuebraDeBloco`, `CasoDeUsoFinalizarQuebraDeBloco` (um por método de intenção, mesmo padrão 1:1 já usado pelos demais Casos de Uso de PLAY).
+- `infrastructure.protocol.v1_8.RegistroDePacotesV1_8` e `AdaptadorConexaoBotV1_8.handlersV1_8()` atualizados com `PlayerDiggingPacket` (id `0x07` SERVERBOUND — sem colisão com `RespawnPacket`, que usa o mesmo id `0x07` mas CLIENTBOUND, validado por teste dedicado, mesmo padrão já usado para `0x04`/`0x06`).
+
+Restrições respeitadas
+
+Nenhuma mineração automática: nenhum Tick loop, nenhum cálculo de força de quebra vs. dureza de bloco, nenhuma seleção automática de ferramenta, nenhum timer — cada chamada envia exatamente um pacote, sob demanda.
+
+Testes
+
+`PlayerDiggingCodecTest` (round-trip para os 3 status usados, incluindo coordenadas negativas), `PlayerDiggingHandlerTest`, 3 testes de Caso de Uso (`CasoDeUsoIniciarQuebraDeBlocoTest`/`CancelarQuebraDeBlocoTest`/`FinalizarQuebraDeBlocoTest`, sucesso + exceção sem sessão), 3 testes em `SessaoDeJogoTest` (um por status), cenário de pipeline completa, teste de integração ponta a ponta (`AdaptadorConexaoBotV1_8Test.deveEnviarPlayerDiggingAoServidorAoChamarIniciarQuebraDeBlocoNaSessaoDeJogo`), e localização por id/registro (incluindo teste dedicado de não colisão com `RespawnPacket` clientbound).
+
+### Incremento 10.4 — Player Block Placement
+
+Status
+
+Concluído
+
+Objetivo
+
+Implementar o pacote Player Block Placement (`0x08`, PLAY/SERVERBOUND) — colocação de bloco, sem lógica de inventário automático.
+
+Análise do legado
+
+`PacketBlockPlace.cs`: `location` (Position) + `direction` (byte) + `item` (Slot) + `cursorX`/`cursorY`/`cursorZ` (byte cada), nessa ordem — idêntico à especificação oficial do protocolo 47 para `client.Version == v1_8`. O legado usa o valor sentinela `X=Y=Z=-1`/`Direction=byte.MaxValue` (0xFF) para "usar item na mão sem bloco-alvo" (chamado em `LeftClickItem()`/`PlaceCurrentBlock()` para itens especiais como baldes/isqueiro/sementes) — suportado pelo Codec por fidelidade de fio (ver Incremento 10.1, item 8), mas **nenhum método de intenção dedicado a esse caso foi criado** (fora de escopo: "usar item"/inventário automático). O campo `item` reaproveita o mesmo formato "Slot" (`ItemStackCodec`) já usado por `WindowItems`/`SetSlot`/`EntityEquipment`, incluindo suporte a item nulo (slot vazio).
+
+Entregue
+
+- `domain.protocol.v1_8.PlayerBlockPlacementPacket`/`PlayerBlockPlacementCodec`/`PlayerBlockPlacementHandler`/`EventoPlayerBlockPlacement` (PLAY, id `0x08`, SERVERBOUND). Codec com extensão de sinal explícita do campo `y` na decodificação (única diferença técnica em relação a `BlockChangeCodec`/`PlayerDiggingCodec`, documentada no próprio Codec — necessária para representar corretamente o sentinela `-1`).
+- `domain.bot.SessaoDeJogo.colocarBloco(x,y,z,direction,item,cursorX,cursorY,cursorZ)` — sem mutação de estado (mundo/blocos permanecem server-authoritative via `ChunkData`/`BlockChange`, nenhuma predição local), sem valores padrão de cursor (caller decide, sem "mágica" oculta).
+- `application.usecase.CasoDeUsoColocarBloco` (conforme DEC-21).
+- `infrastructure.protocol.v1_8.RegistroDePacotesV1_8` e `AdaptadorConexaoBotV1_8.handlersV1_8()` atualizados com `PlayerBlockPlacementPacket` (id `0x08` SERVERBOUND — sem colisão com `PlayerPositionAndLookPacket`, que usa o mesmo id `0x08` mas CLIENTBOUND, validado por teste dedicado).
+
+Restrições respeitadas
+
+Nenhuma lógica de inventário automático: nenhuma seleção automática de item, nenhum reenvio automático do "segundo Player Block Placement" que o legado faz para itens especiais (baldes/sementes/isqueiro — ver `MinecraftClient.PlaceCurrentBlock`), nenhuma validação de slot ativo. O Caso de Uso recebe o `ItemStack` já pronto do chamador.
+
+Testes
+
+`PlayerBlockPlacementCodecTest` (round-trip com item presente, item nulo, e o sentinela `-1`/`-1`), `PlayerBlockPlacementHandlerTest`, `CasoDeUsoColocarBlocoTest` (sucesso + exceção sem sessão), `SessaoDeJogoTest.deveColocarBlocoEnviandoOPlayerBlockPlacementPacket`, cenário de pipeline completa, teste de integração ponta a ponta (`AdaptadorConexaoBotV1_8Test.deveEnviarPlayerBlockPlacementAoServidorAoChamarColocarBlocoNaSessaoDeJogo`), e localização por id/registro (incluindo teste dedicado de não colisão com `PlayerPositionAndLookPacket` clientbound).
+
+Validação executada (Incrementos 10.2 a 10.4, implementados na mesma sessão)
+
+`mvn clean test` (JDK 21.0.9, Maven 3.9.7) — BUILD SUCCESS, **548 testes executados, 0 falhas, 0 erros, 3 skipped deliberadamente** (mesmos 3 já registrados desde incrementos anteriores). Mudança 100% aditiva: nenhuma interface já aprovada foi alterada (`SessaoDeJogo`, `RegistroDePacotesV1_8`, `AdaptadorConexaoBotV1_8` só receberam adições), nenhum teste pré-existente foi modificado.
+
+Próximo passo sugerido
+
+Candidatos não comprometidos, a critério do responsável do projeto: combinação de posição+rotação reaproveitando `ConfirmacaoDePosicaoPacket` (DEC-22, ainda não implementada); "usar item na mão" (sentinela `-1`/`-1`/`-1` de Player Block Placement, Codec já suporta, falta método de intenção dedicado); `Player` bare (id `0x03`); Entity Action (`0x0B` serverbound — sneak/sprint/leave bed); restante da Milestone 7 (Update Sign, World Border, Update Block Entity, Block Action, Block Break Animation). Mineração automática, física, Tick loop e lógica de inventário automático continuam fora de escopo por instrução explícita desta milestone. Nenhuma DEC pendente bloqueia os candidatos remanescentes.
+
+---
+
+## Milestone 11
+
+Status
+
+CONCLUÍDA
+
+Objetivo
+
+Ação combinada de posição+rotação iniciada pelo bot (mover e olhar em um único pacote), reaproveitando `ConfirmacaoDePosicaoPacket`/Codec (id `0x06`, PLAY/SERVERBOUND) conforme já decidido pela DEC-22 — candidato escolhido pelo responsável do projeto entre os listados ao encerrar a Milestone 10 (ver Seção 10).
+
+### Incremento 11.1 — Movimentação e Rotação Combinadas (Move And Look)
+
+Status
+
+Concluído
+
+Análise do legado
+
+`AdvancedBot.Client.MinecraftClient.cs` (loop principal de tick, ~linhas 803-820): a cada tick, se `Player.IsPositionChanged` e `Player.IsRotationChanged` forem ambos verdadeiros, o bot envia um único `PacketPosAndLook(PosX, PosY, PosZ, Yaw, Pitch, OnGround)` em vez de `PacketPlayerPos`+`PacketPlayerLook` separados (usados nos ramos `else if` quando só um dos dois mudou) — a mesma decisão de design que a DEC-22 já havia antecipado para o lado Java. `AdvancedBot.Client.Packets.PacketPosAndLook.cs` confirma o mesmo formato de fio já implementado por `ConfirmacaoDePosicaoPacket`/`ConfirmacaoDePosicaoCodec` desde a Milestone 5 Incremento 2 (x, y, z, yaw, pitch, onGround — o campo `FeetY` do C# é um artifício de serialização interno, não exposto ao domínio Java, decisão já tomada naquele incremento e não revisada nesta milestone). Nenhuma divergência nova encontrada entre legado e protocolo; nenhum Packet/Codec novo necessário, confirmando a decisão prévia da DEC-22.
+
+Entregue
+
+- `domain.bot.SessaoDeJogo.moverEOlhar(double x, double y, double z, float yaw, float pitch, boolean onGround)` — mutação otimista de x/y/z/yaw/pitch (mesmo padrão de `mover`/`olhar`), seguida de `conexao.send(new ConfirmacaoDePosicaoPacket(...))`. Nenhum Packet/Codec/Handler/Evento novo — reaproveita o registro já existente em `RegistroDePacotesV1_8` (id `0x06` SERVERBOUND) e o `ConfirmacaoDePosicaoHandler` já ligado em `AdaptadorConexaoBotV1_8.handlersV1_8()` desde a Milestone 5, exatamente como a DEC-22 previu.
+- `application.usecase.CasoDeUsoMoverEOlharJogador` (conforme DEC-21) — um Caso de Uso por método de intenção, mesmo padrão 1:1 já usado por `CasoDeUsoMoverJogador`/`CasoDeUsoRotacionarJogador`.
+- Nenhuma DEC nova, nenhum Port novo, nenhum agregado novo — escopo 100% coberto pela DEC-21 (fluxo de ação iniciada pelo bot) e pela DEC-22 (reaproveitamento explícito de `ConfirmacaoDePosicaoPacket` para este exato caso, evitando colisão de chave em `RegistroDePacotesV1_8`).
+- Mudança 100% aditiva — nenhuma interface já aprovada foi alterada (`SessaoDeJogo`, `RegistroDePacotesV1_8`, `AdaptadorConexaoBotV1_8` só receberam adições).
+
+Testes
+
+`SessaoDeJogoTest.deveMoverEOlharAtualizandoPosicaoERotacaoEEnviandoConfirmacaoDePosicaoPacket`; `CasoDeUsoMoverEOlharJogadorTest` (sucesso + `IllegalStateException` sem sessão); teste de integração ponta a ponta sobre socket loopback real (`AdaptadorConexaoBotV1_8Test.deveEnviarConfirmacaoDePosicaoAoServidorAoChamarMoverEOlharNaSessaoDeJogo`). Nenhum teste de round-trip de Codec novo — `ConfirmacaoDePosicaoCodec` já validado desde a Milestone 5 Incremento 2, sem alteração nesta milestone.
+
+Validação executada
+
+`mvn clean test` (JDK 21.0.9, Maven 3.9.7) — BUILD SUCCESS, **552 testes executados, 0 falhas, 0 erros, 3 skipped deliberadamente** (mesmos 3 já registrados desde incrementos anteriores).
+
+Próximo passo sugerido
+
+Candidatos não comprometidos, a critério do responsável do projeto: "usar item na mão" (sentinela `-1`/`-1`/`-1` de Player Block Placement, Codec já suporta, falta método de intenção dedicado); `Player` bare (id `0x03`); Entity Action (`0x0B` serverbound — sneak/sprint/leave bed); restante da Milestone 7 (Update Sign, World Border, Update Block Entity, Block Action, Block Break Animation); criptografia AES-CFB8/modo online; integração de `CasoDeUsoDesconectarBot`/`ConexaoBotPort.disconnect()`. Mineração automática, física, Tick loop e lógica de inventário automático continuam fora de escopo por política do projeto. Nenhuma DEC pendente bloqueia os candidatos remanescentes.
+
+---
+
+## Milestone 12
+
+Status
+
+CONCLUÍDA
+
+Objetivo
+
+Deslocar o foco de novos pacotes de protocolo para a arquitetura de execução de comandos do bot — permitir que uma instrução externa em texto acione as ações já implementadas pelas Milestones 8–11, reutilizando obrigatoriamente `SessaoDeJogo` e `InventarioDoJogador` sempre que possível, sem introduzir nenhum pacote de protocolo, motor de física ou pathfinding novos.
+
+### Incremento 12.1 — Arquitetura de Execução de Comandos (DEC-23)
+
+Status
+
+Concluído
+
+Análise do legado
+
+`AdvancedBot.Client.Commands.ICommand`/`CommandResult` e `AdvancedBot.Client.CommandManagerNew` (`AdvancedBot.Client.CommandManagerNew.cs`): comando modelado como classe abstrata com acesso direto a `Client`/`Player`/`World`, metadados (`DisplayName`/`Description`/`Aliases`/`Parameters`) e três mecanismos exclusivos de automação contínua (`isMacro`, `Toggle()`/`IsToggled`, `Tick()`, chamado a cada tick para todos os comandos registrados). `CommandManagerNew` mantém ~29 comandos, localiza por alias (case-insensitive), despacha com `try/catch` genérico que vira `CommandResult.Error`, e traduz apenas `Error`/`MissingArgs` em mensagem padrão — `Success`/`ErrorSilent` não geram mensagem própria (cada comando imprime seu próprio feedback via `Client.PrintToChat`, saída local do console do operador, não chat do Minecraft).
+
+Decisão (DEC-23, ver [01-Decisoes-Arquiteturais.md](01-Decisoes-Arquiteturais.md)): `Comando`/`ResultadoComando`/`GerenciadorDeComandos` vivem em `interfaces.comando` (camada já aprovada pela DEC-12, populada pela primeira vez nesta milestone). Contrato mínimo, single-shot (`ResultadoComando executar(Bot, String alias, String[] argumentos)`), sem `Tick`/`Toggle`/`isMacro` — mecanismo de macro fica adiado até o primeiro macro real ser construído, mesma disciplina da "regra de três" já registrada na DEC-18. `ResultadoComando`: `SUCESSO`/`ARGUMENTOS_FALTANDO`/`ERRO`/`NAO_ENCONTRADO` (substitui `Success`/`MissingArgs`/`Error`/`ErrorSilent` — `ErrorSilent` não reproduzido, pois o bot Java não tem canal de saída de texto para o operador ainda; `NAO_ENCONTRADO` nomeia explicitamente o que no legado é tratado fora do próprio enum). Regra de acesso: um `Comando` de ação nunca chama `SessaoDeJogo` diretamente — sempre delega a um `CasoDeUso` já aprovado (reforça a DEC-21, que já previa textualmente "um futuro... comando" como origem legítima de uma ação); pode ler estado público de `Bot`/`SessaoDeJogo` para resolver parâmetros (ex.: item ativo da hotbar), mesmo raciocínio já usado pelo legado (`CommandPlaceBlock` resolve `Client.ItemInHand` diretamente no próprio comando).
+
+Entregue
+
+- `interfaces.comando.Comando` (interface), `ResultadoComando` (enum), `GerenciadorDeComandos` (registro por alias, parsing de `"alias arg1 arg2..."`, despacho com captura de `RuntimeException`→`ERRO`, mesmo padrão do `RunCommand` do legado).
+- 8 comandos concretos, todos delegando a um Caso de Uso já existente e aprovado (Milestones 9–10), sem nenhum pacote de protocolo, Port ou agregado novo: `ComandoMover`/`ComandoOlhar`/`ComandoMoverEOlhar` (→ `CasoDeUsoMoverJogador`/`CasoDeUsoRotacionarJogador`/`CasoDeUsoMoverEOlharJogador`), `ComandoBalancarBraco` (→ `CasoDeUsoBalancarBraco`), `ComandoIniciarQuebraDeBloco`/`ComandoCancelarQuebraDeBloco`/`ComandoFinalizarQuebraDeBloco` (→ os três Casos de Uso de Player Digging), `ComandoColocarBloco` (→ `CasoDeUsoColocarBloco`, resolvendo o item da hotbar ativa via `InventarioDoJogador.slotAtivo()`, cursor default `(8,8,8)` na ausência de ray casting).
+- Nenhuma interface já aprovada foi alterada (`CasoDeUso`, `SessaoDeJogo`, `ConexaoMinecraft`, `Bot` permanecem exatamente como são) — mudança 100% aditiva.
+
+Comandos do legado avaliados e explicitamente excluídos (candidatos remanescentes, cada um documentado na DEC-23 com o motivo específico): `CommandMove`/`CommandGoto` (dependem de fila de movimento por tick e pathfinding A*, inexistentes no Java); `CommandSneak` (depende do pacote Entity Action `0x0B`, não implementado); `CommandHotbarClick`/`CommandInvClick`/`CommandInvCaptcha`/`CommandDropAll`/`CommandGive`/`CommandUseEntity`/`CommandUseBow` (pacotes de inventário/entidade/uso de item não implementados); `CommandKillAura`/`CommandMiner`/`CommandHerbalism`/`CommandAntiAFK`/`Solk.CommandPesca`/`Solk.CommandPescaV2`/`Solk.CommandMob`/`Solk.CommandMobPlus`/`Solk.CommandMobTeleport` (automação/combate, excluídos por política do projeto desde a Milestone 5); `CommandHelp`/`CommandPlayerList` (seu valor é o texto impresso; sem canal de saída para o operador ainda, DEC-02 não decidida); `CommandClearChat`/`CommandProxy` (sem equivalente de domínio); `CommandScript`/`CommandPortal`/`CommandRetard`/`CommandTwerk`/`CommandReco` (dependem de infraestrutura ainda não pronta — orquestração de comandos, geometria de mundo, movimentação por tick, `ConexaoBotPort.disconnect()`).
+
+Testes
+
+`GerenciadorDeComandosTest` (localização por alias case-insensitive, parsing de alias/argumentos incluindo ausência de argumentos, `NAO_ENCONTRADO`, captura de exceção→`ERRO`, propagação de resultado do comando, cenário ponta a ponta real com `ComandoBalancarBraco`+`SessaoDeJogo`+socket loopback); um teste por comando concreto cobrindo sucesso (packet enviado corretamente verificado byte a byte via record equality), `ARGUMENTOS_FALTANDO` e exceção quando o bot não está em sessão de jogo ativa; `ComandoColocarBlocoTest` cobre também a resolução do item ativo da hotbar (slot 0 e slot diferente de 0) e o cursor default.
+
+Validação executada
+
+`mvn clean test` (JDK 21.0.9, Maven 3.9.7) — BUILD SUCCESS, **583 testes executados, 0 falhas, 0 erros, 3 skipped deliberadamente** (mesmos 3 já registrados desde incrementos anteriores). Mudança 100% aditiva — nenhum teste pré-existente foi alterado.
+
+Próximo passo sugerido
+
+Candidatos não comprometidos, a critério do responsável do projeto: canal de saída de texto para o operador (CLI ou API, DEC-02 ainda não decidida) — desbloquearia `ComandoAjuda`/`ComandoListarJogadores`; ray casting contra `Mundo` (desbloquearia reconstrução fiel de `CommandBreakBlock`/`CommandClickBlock`/`CommandPlaceBlock`, com auto-look/auto-tool); Entity Action `0x0B` serverbound (desbloquearia um `ComandoSneak`); "usar item na mão" (sentinela `-1`/`-1`/`-1` de Player Block Placement); restante da Milestone 7; criptografia AES-CFB8/modo online; integração de `CasoDeUsoDesconectarBot`/`ConexaoBotPort.disconnect()`. Mineração automática, física, Tick loop e lógica de inventário automático continuam fora de escopo por política do projeto. Nenhuma DEC pendente bloqueia os candidatos remanescentes.
+
+---
+
+## Milestone 13
+
+Status
+
+CONCLUÍDA
+
+Objetivo
+
+Iniciar a construção de capacidades reutilizáveis que sirvam de base para futuras automações (mineração, combate, pesca, macros), reaproveitando obrigatoriamente `Mundo`, `SessaoDeJogo` e `Bloco` já existentes, sem introduzir nenhum Packet, Port ou Use Case novo.
+
+### Incremento 13.1 — Raycast Fiel ao Legado sobre Mundo (DEC-24)
+
+Status
+
+Concluído
+
+Análise do legado
+
+`AdvancedBot.Client.Map.World.RayCast(Vec3d start, Vec3d end, bool stopOnNonAir, bool allowWater)` (`World.cs:266`): algoritmo de travessia de voxels por eixo dominante (mesma família do `clipBlock`/`rayTraceBlocks` do Minecraft vanilla), usado por `AutoMiner`, `CommandBreakBlock`, `CommandPlaceBlock`, `CommandClickBlock`, `CommandHerbalism` e `Solk/MacroUtils` como primeiro passo antes de qualquer ação sobre um bloco. `Entity.RayCastBlocks(double radius)`/`GetLookVector()`/`CalculateLookVector(float yaw, float pitch)` (`Entity.cs:505-535`): conveniência que dispara o raycast a partir da posição/rotação do próprio jogador (6 blocos de alcance em todos os usos encontrados). `Blocks.IsSolid(int id)` (`Blocks.cs:485`): tabela estática de ids não-sólidos, consultada apenas quando `stopOnNonAir=false`.
+
+Entre as capacidades candidatas apresentadas para esta milestone (raycast contra Mundo/Entidades; canal de saída de texto para o operador; pacotes PLAY restantes; criptografia/modo online), o raycast foi escolhido por ser a de maior prioridade arquitetural e menor risco de integração: nenhum Packet/Port/Use Case novo, reaproveita `Mundo`/`SessaoDeJogo` já existentes, evidência de legado direta e concentrada em poucos arquivos.
+
+Decisão (DEC-24, ver [01-Decisoes-Arquiteturais.md](01-Decisoes-Arquiteturais.md)): porte literal do algoritmo para `Mundo.tracarRaio(...)`, incluindo o quirk de que o voxel de destino nunca é testado por solidez (retorna `null` se o raio chegar até ele sem bater em nada antes) e a semântica contraintuitiva de `permitirAgua` (quando `true`, líquido conta como acerto e PARA o raio; quando `false`, líquido é sempre atravessado, independentemente de `pararEmNaoAr`). `Bloco` ganha `solido()` (porte de `Blocks.IsSolid`). `SessaoDeJogo.tracarRaioParaBlocos(alcance)` porta `RayCastBlocks`/`GetLookVector`/`CalculateLookVector`, preservando o offset `yaw - 180` do legado antes de converter para radianos. `CanSeePlayer`/`CanSeeEntity` não foram portados como métodos dedicados — no legado ambos já são apenas uma chamada a `World.RayCast` mirando a posição da entidade-alvo, o que `Mundo.tracarRaio` já cobre por composição; a tabela `EntityProperty`/altura-por-tipo-de-mob que `CanSeeEntity` usaria para mobs genéricos (jogadores usam a constante fixa `1.62`) fica de fora, por ser um levantamento de dados maior sem caso de uso real ainda.
+
+Entregue
+
+- `domain.protocol.v1_8.Bloco.solido()` (novo método): porte de `Blocks.IsSolid(int)`.
+- `domain.bot.Mundo.tracarRaio(origemX,Y,Z, destinoX,Y,Z, pararEmNaoAr, permitirAgua): ResultadoDoRaio` (novo): porte de `World.RayCast`.
+- `domain.bot.ResultadoDoRaio` (novo record: `x`, `y`, `z`, `face`): porte de `HitResult`, limitado aos campos que o algoritmo popula (`HitVector`/`PointedEntity` nunca são atribuídos por `World.RayCast`).
+- `domain.bot.SessaoDeJogo.tracarRaioParaBlocos(double alcance): ResultadoDoRaio` (novo): porte de `RayCastBlocks`.
+- Correção em `domain.bot.Mundo.blocoEm`: bounds-check fiel a `World.GetBlock` (`y` em `[0,256)`, `x`/`z` dentro de ±30.000.000) — sem isso, `tracarRaio` lançaria `ArrayIndexOutOfBoundsException` ao percorrer `y<0`/`y>=256` (cenário real ao minerar perto do bedrock ou do limite de altura, não um caso extremo hipotético). Não altera assinatura nem comportamento para nenhuma entrada já válida/testada.
+- Nenhuma interface já aprovada foi alterada — mudança 100% aditiva.
+
+Testes
+
+`BlocoTest` (novo): os 49 ids não-sólidos do legado classificados corretamente (retranscritos de forma independente da implementação), amostra de blocos sólidos comuns e vizinhos dos não-sólidos (checagem de off-by-one), metadata não afeta solidez. `MundoTest`: bounds-check de `blocoEm` (y negativo, y no limite superior, coordenada horizontal além do limite mundial — nenhum lança exceção); `tracarRaio` — miss (nada bloqueia até o destino), acerto em bloco sólido com verificação de face, líquido atravessado quando `pararEmNaoAr=true`/`permitirAgua=false`, líquido como acerto quando `permitirAgua=true`, o quirk do bloco de destino nunca testado, origem `NaN`. `SessaoDeJogoTest`: `tracarRaioParaBlocos` acerta bloco abaixo ao olhar reto para baixo (`pitch=90`), retorna `null` quando nada está no alcance.
+
+Validação executada
+
+`mvn clean test` (JDK 21.0.9, Maven 3.9.7) — BUILD SUCCESS, **597 testes executados, 0 falhas, 0 erros, 3 skipped** (mesmos 3 já registrados desde incrementos anteriores). Mudança 100% aditiva — nenhum teste pré-existente foi alterado.
+
+Próximo passo sugerido
+
+Candidatos não comprometidos, a critério do responsável do projeto: primeiro Caso de Uso/Comando que consuma `tracarRaioParaBlocos` (ex.: mineração com auto-mira, reconstrução mais fiel de `CommandBreakBlock`/`CommandPlaceBlock`/`CommandClickBlock`); checagem de linha de visão para combate via `Mundo.tracarRaio` direto contra a posição de uma entidade (`EntidadesDoMundo`); altura de olho por tipo de mob (desbloquearia `CanSeeEntity` genérico, hoje só `CanSeePlayer`-equivalente é trivial via constante `1.62`); canal de saída de texto para o operador (CLI ou API, DEC-02 ainda não decidida); Entity Action `0x0B` serverbound; "usar item na mão" (sentinela `-1`/`-1`/`-1` de Player Block Placement); restante da Milestone 7; criptografia AES-CFB8/modo online; integração de `CasoDeUsoDesconectarBot`/`ConexaoBotPort.disconnect()`. Mineração automática, física, Tick loop e lógica de inventário automático continuam fora de escopo por política do projeto. Nenhuma DEC pendente bloqueia os candidatos remanescentes.
+
+---
+
+## Milestone 14
+
+Status
+
+CONCLUÍDA
+
+Objetivo
+
+Reconstrução fiel de `CommandBreakBlock`/`CommandClickBlock`/`CommandPlaceBlock` do legado com auto-look/auto-mira, consumindo `SessaoDeJogo.tracarRaioParaBlocos`/`Mundo.tracarRaio` (DEC-24, Milestone 13) — candidato de maior prioridade arquitetural já previsto nas "Consequências Positivas" daquela DEC, reaproveitando obrigatoriamente `SessaoDeJogo`/`Mundo`/`InventarioDoJogador`/Casos de Uso já existentes, sem introduzir nenhum Packet, Port ou agregado novo.
+
+### Incremento 14.1 — Ações de Bloco com Auto-Mira: Break/Click/Place (DEC-25)
+
+Status
+
+Concluído
+
+Análise do legado
+
+`AdvancedBot.Client.Commands.CommandBreakBlock.cs`/`CommandClickBlock.cs`/`CommandPlaceBlock.cs`: os 3 comandos olham para o bloco-alvo (`Entity.LookToBlock`/`LookTo`, `Entity.cs:471-495`) e confirmam via raycast antes de agir. `CommandClickBlock` usa `World.RayCast` direto até o alvo; `CommandBreakBlock`/`CommandPlaceBlock` usam `Player.RayCastBlocks(6.0)` (a mesma capacidade portada na Milestone 13). `MinecraftClient.BreakBlock`/`PlaceCurrentBlock` (`MinecraftClient.cs:870-892`) concentram os efeitos colaterais de rede (SwingArm + Player Digging start/finish; SwingArm + Player Block Placement, com um segundo envio sem bloco-alvo para itens especiais). `PacketBlockPlace.cs` confirma os valores exatos do sentinela "usar item na mão" (`x=y=z=-1`/`direction=255`/`cursor=(0,0,0)`).
+
+Decisão (DEC-25, ver [01-Decisoes-Arquiteturais.md](01-Decisoes-Arquiteturais.md)): novos `SessaoDeJogo.olharParaBloco`/`usarItemNaMao` (porte de `LookTo`/`LookToBlock` e do construtor sentinela de `PacketBlockPlace`, sem o jitter aleatório do legado — variação cosmética, omitida para preservar o determinismo dos testes de igualdade exata já usados em todo o projeto); 3 novos Comandos (`ComandoClicarBloco`/`ComandoQuebrarBloco`/`ComandoColocarBlocoAutoMira`) delegando exclusivamente a Casos de Uso já aprovados (Milestones 9-10) mais os 2 novos; `ComandoQuebrarBloco` porta apenas o caminho base de `CommandBreakBlock` (opções `rp`/`rt`), excluindo `ncp`/`at` (Tick loop/física e seleção automática de ferramenta, fora de escopo por política do projeto); `ComandoColocarBlocoAutoMira` não porta o branch de item especial de `PlaceCurrentBlock` por ser comprovadamente inalcançável a partir de `CommandPlaceBlock` (que exige `ItemInHand.ID < 256`, excluindo todos os ids especiais).
+
+Entregue
+
+- `domain.bot.SessaoDeJogo.olharParaBloco(int,int,int)` e `usarItemNaMao(ItemStack)` (novos métodos de intenção, ambos delegando a `olhar`/`colocarBloco` já aprovados — zero Packet/Codec novo).
+- `application.usecase.CasoDeUsoOlharParaBloco`/`CasoDeUsoUsarItemNaMao` (novos, mesmo padrão 1:1 já usado por todos os demais Casos de Uso).
+- `interfaces.comando.ComandoClicarBloco` (alias `clicarbloco`/`clickblock`), `ComandoQuebrarBloco` (alias `quebrarbloco`/`breakblock`), `ComandoColocarBlocoAutoMira` (alias `colocarblocoautomira` — "placeblock" já pertence a `ComandoColocarBloco` desde a Milestone 12, colisão evitada com alias próprio, mesmo critério do Incremento 10.2).
+- Nenhuma interface já aprovada foi alterada (`SessaoDeJogo`, `Comando`, `ResultadoComando`, `GerenciadorDeComandos`, `Mundo` só receberam adições ou novos chamadores) — incremento 100% aditivo.
+
+Testes
+
+`SessaoDeJogoTest` (+2: `olharParaBloco` calculando yaw/pitch e enviando `PlayerLookPacket`; `usarItemNaMao` enviando o sentinela), `CasoDeUsoOlharParaBlocoTest`/`CasoDeUsoUsarItemNaMaoTest` (2 cada: sucesso + `IllegalStateException` sem sessão), `ComandoClicarBlocoTest` (6: acerto+clique esquerdo nas coordenadas pedidas, acerto+clique direito nas coordenadas do raio, sem acerto usando face padrão, distância excedida, argumentos faltando, sem sessão), `ComandoQuebrarBlocoTest` (7: sucesso, divergência sem `rt`, divergência ignorada com `rt`, sem acerto, posição relativa, argumentos faltando, sem sessão), `ComandoColocarBlocoAutoMiraTest` (7: sucesso, posição relativa, sem item selecionado, item não é bloco, sem acerto, argumentos faltando, sem sessão).
+
+Validação executada
+
+`mvn clean test` (JDK 21.0.9, Maven 3.9.7) — BUILD SUCCESS, **623 testes executados, 0 falhas, 0 erros, 3 skipped** (mesmos 3 já registrados desde incrementos anteriores). Mudança 100% aditiva — nenhum teste pré-existente foi alterado.
+
+Próximo passo sugerido
+
+Candidatos não comprometidos, a critério do responsável do projeto: canal de saída de texto para o operador (CLI ou API, DEC-02 ainda não decidida) — desbloquearia `ComandoAjuda`/`ComandoListarJogadores`; checagem de linha de visão para combate via `Mundo.tracarRaio` direto contra a posição de uma entidade; altura de olho por tipo de mob (desbloquearia `CanSeeEntity` genérico); `Player` bare (`0x03`) e Entity Action (`0x0B` serverbound — desbloquearia `ComandoSneak`); restante da Milestone 7 (Update Sign, World Border, Update Block Entity, Block Action, Block Break Animation); criptografia AES-CFB8/modo online; integração de `CasoDeUsoDesconectarBot`/`ConexaoBotPort.disconnect()`; estratégia de wiring/DI para a fábrica de conexão em produção (`infrastructure.config` permanece vazio). Mineração automática, física, Tick loop e lógica de inventário automático continuam fora de escopo por política do projeto. Nenhuma DEC pendente bloqueia os candidatos remanescentes.
+
+---
+
+## Milestone 15
+
+Status
+
+CONCLUÍDA
+
+Objetivo
+
+Reconstruir a infraestrutura de saída de mensagens para o operador utilizada pelos comandos do bot (Help, PlayerList, mensagens de erro/sucesso, feedback operacional), fechando a lacuna documentada desde a DEC-23 e repetida como candidato pendente nas Milestones 12, 13 e 14 — sem criar nenhuma interface gráfica.
+
+### Incremento 15.1 — Infraestrutura de Saída de Mensagens, Ajuda e PlayerList (DEC-26)
+
+Status
+
+Concluído
+
+Análise do legado
+
+`AdvancedBot.Client.MinecraftClient.PrintToChat(string msg)` (`MinecraftClient.cs:830-842`): acumula a mensagem em `ChatMessages` (`List<string>`), sob `lock`, truncando por trás quando excede `MaximumChatLines` (`=150`, `MinecraftClient.cs:973`) **antes** de adicionar — a ordem trim-antes-do-add faz o buffer oscilar em 151 elementos em regime permanente, não 150; marca `ChatChanged=true` (flag de repintura da UI WinForms). `CommandManagerNew.RunCommand` (`CommandManagerNew.cs:50-88`): mensagens de fallback (`Comando não encontrado`, `Error`, `MissingArgs`) via o mesmo `PrintToChat`; `Success`/`ErrorSilent` não geram mensagem do gerenciador. `CommandHelp.cs`/`CommandPlayerList.cs`: portados por completo; `PlayerNick.ToString()` (`PlayerNick.cs:28-31`) confirmado como retornando `RealNick`, não `DisplayName` — a listagem de jogadores usa nome, não nome de exibição.
+
+Decisão (DEC-26, ver [01-Decisoes-Arquiteturais.md](01-Decisoes-Arquiteturais.md)): novo `domain.bot.SaidaDoOperador` (porte literal de `ChatMessages`/`MaximumChatLines`/`lock`, incluindo o regime permanente de 151 elementos; `ChatChanged` não portado por falta de consumidor real — DEC-02 ainda não decidida). `Bot` ganha o campo `saidaDoOperador` (getter via Lombok, sem mudança de construtor — não em `SessaoDeJogo`, já que `PrintToChat` no legado é chamado inclusive antes do login). `GerenciadorDeComandos.executar` ganha as 3 mensagens de fallback do `CommandManagerNew` (mesma assinatura pública, mudança interna ao corpo do método). Novos `ComandoAjuda` (alias `ajuda` + `help`/`?` do legado) e `ComandoListarJogadores` (alias `listarjogadores` + `playerlist`/`players` do legado), ambos escrevendo em `bot.getSaidaDoOperador()` sem Caso de Uso — leitura de estado público/escrita local, não ação de protocolo (nenhum `Packet` enviado), mesma exceção já usada por `ComandoColocarBloco` ao ler `InventarioDoJogador`. Nenhum Port novo, nenhuma interface pública alterada.
+
+Entregue
+
+- `domain.bot.SaidaDoOperador` (novo): buffer de mensagens limitado e thread-safe, porte de `ChatMessages`/`MaximumChatLines`.
+- `domain.bot.Bot` ganha o campo final `saidaDoOperador` (sem mudança de construtor).
+- `interfaces.comando.GerenciadorDeComandos.executar` ganha mensagens de fallback (`NAO_ENCONTRADO`/`ARGUMENTOS_FALTANDO`/`ERRO`), mesma assinatura pública.
+- `interfaces.comando.ComandoAjuda` (novo, porta `CommandHelp` — recebe `GerenciadorDeComandos` via construtor para listar o catálogo já registrado) e `ComandoListarJogadores` (novo, porta `CommandPlayerList`).
+- Nenhuma interface já aprovada foi alterada (`Comando`, `ResultadoComando`, construtor de `Bot` permanecem exatamente como são) — incremento 100% aditivo.
+
+Testes
+
+`SaidaDoOperadorTest` (4: buffer vazio, acumulação em ordem, imutabilidade da cópia retornada, truncamento preservando o regime permanente de 151); `BotTest` (+1: `saidaDoOperador` não nula e vazia desde a criação); `GerenciadorDeComandosTest` (+4: mensagem de fallback para alias não encontrado/erro/argumentos faltando, e ausência de mensagem em sucesso); `ComandoAjudaTest` (4: listagem completa ordenada por nome, filtro por termo de busca em nome/alias, formatação de descrição/alias/parâmetros sem prefixo de cifrão, sucesso mesmo sem nenhum outro comando registrado); `ComandoListarJogadoresTest` (4: contagem e nomes corretos, nome nulo de `JogadorConhecido` tratado sem exceção, lista vazia, `IllegalStateException` sem sessão de jogo ativa).
+
+Validação executada
+
+`mvn clean test` (JDK 21.0.9, Maven 3.9.7) — BUILD SUCCESS, **640 testes executados, 0 falhas, 0 erros, 3 skipped** (mesmos 3 já registrados desde incrementos anteriores). Mudança 100% aditiva — nenhum teste pré-existente foi modificado (apenas estendido com novos métodos de teste em arquivos já existentes).
+
+Próximo passo sugerido
+
+Candidatos não comprometidos, a critério do responsável do projeto: checagem de linha de visão para combate via `Mundo.tracarRaio` direto contra a posição de uma entidade; altura de olho por tipo de mob (desbloquearia `CanSeeEntity` genérico); `Player` bare (`0x03`) e Entity Action (`0x0B` serverbound — desbloquearia `ComandoSneak`); restante da Milestone 7 (Update Sign, World Border, Update Block Entity, Block Action, Block Break Animation); criptografia AES-CFB8/modo online; integração de `CasoDeUsoDesconectarBot`/`ConexaoBotPort.disconnect()`; estratégia de wiring/DI para a fábrica de conexão em produção e para o catálogo de comandos (`infrastructure.config` permanece vazio — nenhuma composition root monta `GerenciadorDeComandos`+comandos em produção ainda); decisão de transporte (CLI ou API, DEC-02) para efetivamente consumir `SaidaDoOperador`. Mineração automática, física, Tick loop e lógica de inventário automático continuam fora de escopo por política do projeto. Nenhuma DEC pendente bloqueia os candidatos remanescentes.
+
+---
+
+## Milestone 16
+
+Status
+
+CONCLUÍDA
+
+Objetivo
+
+Reconstruir a infraestrutura de navegação (PathFinding) do bot como mecanismo reutilizável — não uma macro — a ser consumido futuramente por mineração, combate, coleta e exploração.
+
+### Incremento 16.1 — Algoritmo de Busca de Caminho sobre Mundo (DEC-27)
+
+Status
+
+Concluído
+
+Análise do legado
+
+`AdvancedBot.Client.PathFinding.PathFinder`/`Path`/`PathPoint` (`AdvancedBot.Client.PathFinding\PathFinder.cs`, `Path.cs`, `PathPoint.cs`): busca best-first sobre o grid de blocos (fila de prioridade binária por `DistanceToTarget`, heurística Manhattan com peso 2× no eixo Y, expansão nas 4 direções horizontais, cap de 512 iterações, cap de 3 blocos de queda por "ponto seguro"; classificação de nó via `GetNodeType`: Aberto/Bloqueado/Água/Lava/Cerca/Alçapão). `AdvancedBot.Client.PathFinding.PathGuide` (`PathGuide.cs`): consumidor que executa o caminho tick a tick, lendo/escrevendo `MotionX/Y/Z`/`OnGround`/`IsCollidedHorizontally`/`ActivePotions`/`GetMoveSpeed()` — depende inteiramente de um motor de física que não existe no domínio Java. `World.CreatePathTo` (`World.cs:195-202`): pré-checagem de distância + delegação a um `PathFinder` novo por chamada. Único ponto de chamada de `PathGuide.Create` em todo o projeto: `MinecraftClient.RequestPathTo`/`FindPath` (`MinecraftClient.cs:646-671`), sempre com os mesmos 5 valores fixos (`radius=80f, allowWoodenDoor=true, movementBlockAllowed=false, pathInWater=true, canDrown=false`). Dois achados de código morto confirmados por rastreamento manual: `canEntityDrown` nunca é `true` em nenhuma chamada de todo o projeto (não só fora do escopo desta milestone); `NodeType._2` é inalcançável em `GetNodeType` (as duas únicas escritas da flag correspondente são sempre seguidas, na mesma iteração, por um retorno antecipado de outro tipo).
+
+Decisão (DEC-27, ver [01-Decisoes-Arquiteturais.md](01-Decisoes-Arquiteturais.md)): o algoritmo puro (`PathFinder`/`Path`/`PathPoint`) entra em escopo, portado por completo sobre `Mundo`/`Bloco` já existentes; `PathGuide` e todos os seus consumidores (`CommandGoto`, `CommandFollow`, `CommandPortal`, `AutoMiner`) permanecem fora de escopo, sem nenhuma reavaliação de status — a DEC-22 (motor de física/Tick automático fora de escopo) não é reaberta nem alterada, porque a peça que dependeria dela simplesmente não é construída. Novo `domain.bot.Mundo.criarCaminhoPara(...)` (porta `World.CreatePathTo`, incluindo a pré-checagem de distância com a mesma inconsistência de offset do legado entre a checagem e a busca interna); novo `domain.bot.BuscadorDeCaminho` (package-private, mesmo precedente de `SecaoDeChunk` — porta `PathFinder` + a fila de prioridade `Path` como classe aninhada privada `FilaDeNos`); novo `domain.bot.PontoDeCaminho` (público, porta `PathPoint`, com `equals`/`hashCode` por X/Y/Z). `SessaoDeJogo.criarCaminhoPara(destX,destY,destZ)` usa a própria posição e os 4 valores fixos observados no único call site real do legado. `canDrown` não é portado como parâmetro (código morto comprovado); `NodeType._2` não tem equivalente em `TipoDeNo` (6 valores, branch inalcançável removido); `entity.IsOnLava()` portado como verificação pontual inline (sem introduzir uma classe `AABB` genérica sem consumidor); chave de memoização por coordenada portada como `record ChavePonto(x,y,z)` em vez do hash bit a bit do legado (otimização de performance específica do C#, sem efeito observável).
+
+Entregue
+
+- `domain.bot.PontoDeCaminho` (novo, público): X/Y/Z + as duas distâncias (euclidiana, manhattan com peso 2× em Y); porte de `PathPoint`.
+- `domain.bot.BuscadorDeCaminho` (novo, package-private): porte de `PathFinder`, incluindo a fila de prioridade binária (`FilaDeNos`, classe aninhada privada, porte de `Path`) e a classificação de nó (`tipoDoNo`, porte de `GetNodeType`, sem o branch inalcançável `NodeType._2`).
+- `domain.bot.Mundo.criarCaminhoPara(origemX,origemY,origemZ,destinoX,destinoY,destinoZ,raio,permitirPortaDeMadeira,bloqueioDeMovimentoPermitido,podeNadar)` (novo): porte de `World.CreatePathTo`.
+- `domain.bot.SessaoDeJogo.criarCaminhoPara(destX,destY,destZ)` (novo): conveniência usando a própria posição e os valores fixos do legado.
+- `Mundo.piso` passa de `private` para visibilidade de pacote (reaproveitado por `BuscadorDeCaminho`) — não é mudança de contrato público.
+- Nenhuma interface já aprovada foi alterada, nenhum Packet/Port/Caso de Uso/`Comando`/bounded context novo — incremento 100% aditivo.
+
+Testes
+
+`MundoTest` (+10: caminho reto em faixa plana com sequência exata de pontos, origem igual a destino, corte por raio+8, origem isolada sem opção segura, desvio de parede sólida de 2 blocos de altura, lava sempre bloqueia mesmo com nó acima classificado como aberto, água permite pousar quando `podeNadar=false` mas é recusada quando `podeNadar=true` — validando a diferença exata de comportamento entre os dois modos —, porta de madeira exige as duas flags simultaneamente para ser transponível, confirmando que `permitirPortaDeMadeira` isolada não basta); `SessaoDeJogoTest` (+2: `criarCaminhoPara` usa a própria posição como origem, retorna nulo sem opção segura).
+
+Validação executada
+
+`mvn clean test` (JDK 21.0.9, Maven 3.9.7) — BUILD SUCCESS, **652 testes executados, 0 falhas, 0 erros, 3 skipped** (mesmos 3 já registrados desde incrementos anteriores). Mudança 100% aditiva — nenhum teste pré-existente foi modificado.
+
+Próximo passo sugerido
+
+Candidatos não comprometidos, a critério do responsável do projeto (lista inalterada em relação à Milestone 15, com a ressalva de que "pathfinding A*" deixou de faltar — apenas "fila de movimento por tick" continua bloqueando `CommandMove`/`CommandGoto`): checagem de linha de visão para combate via `Mundo.tracarRaio`; altura de olho por tipo de mob (`CanSeeEntity` genérico); `Player` bare/Entity Action (`ComandoSneak`); restante da Milestone 7; criptografia/modo online; integração de disconnect (`ComandoReco`); estratégia de wiring/DI para produção; decisão de transporte (CLI ou API, DEC-02). Tick loop/motor de física automático — e, por consequência, `PathGuide`/execução de caminho tick a tick — continuam fora de escopo por política do projeto. Nenhuma DEC pendente bloqueia os candidatos remanescentes.
+
+---
+
+## Milestone 17
+
+Status
+
+CONCLUÍDA
+
+Objetivo
+
+Reconstruir a infraestrutura de mineração do bot como primitivas de domínio reutilizáveis — não uma macro — a ser consumida futuramente por uma macro de mineração completa.
+
+### Incremento 17.1 — Registro de Blocos e Calculadora de Força de Quebra (DEC-28)
+
+Status
+
+Concluído
+
+Análise do legado
+
+`AdvancedBot.Client.DiggingHelper` (`DiggingHelper.cs`): `StrengthVsBlock`/`CanHarvestBlock`/`ToolStrengthVsBlock`/`PlayerStrengthVsBlock` — fórmula de força de quebra por tick (hardness do bloco, ferramenta certa/errada, bônus de Efficiency, multiplicadores de Haste/Mining Fatigue, penalidade debaixo d'água e fora do chão), consumida por `AutoMiner.Tick`/`CommandBreakBlock.Tick` (ambos Tick loop, fora de escopo). `AdvancedBot.Client.Blocks`/`Block` (`Blocks.cs`/`Block.cs`): registro de `Hardness`/`Material`/`HarvestTools`/`Diggable`/`Transparent`/`StackSize`/`DisplayName`/`Variations` por id, construtor estático lendo um `blocks.json` embutido em `AdvancedBot.Properties.Resources.resx` (`Resources.blocks`, mesmo formato do `minecraft-data` já usado como referência cruzada neste projeto); só `Hardness`/`Material`/`HarvestTools` têm consumidor comprovado (a fórmula de força) — os demais campos não são usados por nenhum caminho em escopo. `Resources.materials` (mesmo `.resx`): tabela plana material→ferramenta→força (236 blocos e 43 entradas de ferramenta extraídos byte a byte via decodificação base64 do `.resx`, não recriados de memória). `AdvancedBot.Client.Entity` (`Entity.cs`): `ActivePotions` (Dictionary por effect id), `OnGround`, `IsUnderWater()` (bloco na posição de pés contra ids de água 8/9 — totalmente derivável hoje via `Mundo.blocoEm`, sem lacuna). `AdvancedBot.Client.ItemStack` (`ItemStack.cs`): `GetEnchantmentLevel(id)` lendo NBT `"ench"` — sem equivalente Java (`ItemStackCodec` descarta NBT por decisão deliberada desde a Milestone 5.5). `ReceptorEntityEffect` (Java, já existente desde a Milestone 5.6.4) documenta que o entityId do próprio bot nunca está em `EntidadesDoMundo` — efeitos do próprio bot (Haste/Mining Fatigue inclusos) continuam não modelados. `AutoMiner.cs`/`CommandMiner.cs`/`CommandBreakBlock.cs` (opção `ncp`, já excluída na Milestone 14): consumidores Tick, permanecem fora de escopo por DEC-22/23.
+
+Decisão (DEC-28, ver [01-Decisoes-Arquiteturais.md](01-Decisoes-Arquiteturais.md)): a fórmula (`DiggingHelper`) e o registro de dados (`Blocks`/`Block`, só os 3 campos com consumidor comprovado) entram em escopo como calculadora pura sobre `Bloco`/`ItemStack` já existentes. Os três insumos sem estado equivalente no domínio Java (nível de Efficiency, amplifier de Haste, amplifier de Mining Fatiga) tornam-se parâmetros explícitos da calculadora — mesmo padrão já usado por `onGround` em `SessaoDeJogo.mover`/`olhar` desde a DEC-22 —, com `-1` como sentinela de "efeito não ativo" (mesma convenção de `EntidadeRemota.ultimaAnimacao`/`ultimoStatus`); nenhuma das três lacunas é resolvida ou reaberta por esta DEC. "Submerso", ao contrário, é fielmente derivável hoje e ganha método real e wired, não um parâmetro cego. `RegistroDeBlocos` package-private (mesmo precedente de `SecaoDeChunk`/`BuscadorDeCaminho`); `CalculadoraDeQuebraDeBloco` pública, mesmo padrão de capacidade pura sem consumidor de produção obrigatório já usado por `Mundo.tracarRaio` (DEC-24) e `Mundo.criarCaminhoPara` (DEC-27). Nenhum gatilho de parada da instrução da milestone se aplica: não é novo bounded context, não é novo Port, não é alteração de contrato público, não é alteração de DEC existente, e há evidência suficiente no legado para os 236 blocos/43 ferramentas portados.
+
+Entregue
+
+- `domain.protocol.v1_8.RegistroDeBlocos` (novo, package-private): `dureza(id)`/`material(id)`/`ferramentasDeColeta(id)` — porte de `Blocks.GetHardness`/`.Material`/`.HarvestTools`, dados extraídos byte a byte do `blocks.json` embutido no `.resx` legado (236 blocos; array dimensionado em 256, maior id legado é 255/`structure_block`).
+- `domain.protocol.v1_8.CalculadoraDeQuebraDeBloco` (novo, público): `podeColher`/`forcaDaFerramenta`/`forcaDoJogador`/`forcaDeQuebra` — porte completo de `DiggingHelper`, incluindo a tabela de ferramentas (`materials.json`, 43 entradas) como lista privada. `nivelEficiencia`/`amplifierCeleridade`/`amplifierFadiga`/`noChao` são parâmetros explícitos pelos motivos documentados na DEC-28.
+- `domain.bot.SessaoDeJogo.estaSubmerso()` (novo): porte de `Entity.IsUnderWater` — bloco na posição atual (via `Mundo.blocoEm`) contra ids de água (8/9).
+- Nenhuma interface já aprovada foi alterada, nenhum Packet/Port/Caso de Uso/`Comando`/bounded context novo — incremento 100% aditivo.
+
+Testes
+
+`RegistroDeBlocosTest` (6: dureza/material/ferramentas de pedra, dureza negativa de bedrock, tronco sem ferramenta exigida, restrição de minério de diamante, dados padrão para id desconhecido e para id de lacuna dentro do array); `CalculadoraDeQuebraDeBlocoTest` (21: `podeColher` com/sem ferramenta e com/sem restrição, `forcaDaFerramenta` sem correspondência e com correspondência exata da tabela, `forcaDoJogador` com bônus de Efficiency condicionado a força base >1, multiplicadores de Haste/Mining Fatigue em cada branch — incluindo o branch padrão ≥3 —, divisores de submerso/fora-do-chão isolados e combinados, `forcaDeQuebra` com dureza negativa (zero) e dureza zero (Infinity, fiel à divisão por zero do legado), divisor 30 vs. 100 conforme `podeColher`); `SessaoDeJogoTest` (+4: `estaSubmerso` falso sem chunk carregado, verdadeiro para água parada e água corrente, falso para bloco sólido).
+
+Validação executada
+
+`mvn clean test` (JDK 21.0.9, Maven 3.9.7) — BUILD SUCCESS, **683 testes executados, 0 falhas, 0 erros, 3 skipped** (mesmos 3 já registrados desde incrementos anteriores). Mudança 100% aditiva — nenhum teste pré-existente foi modificado.
+
+Próximo passo sugerido
+
+Candidatos não comprometidos, a critério do responsável do projeto: um `Comando`/macro de mineração completa consumindo `CalculadoraDeQuebraDeBloco`+`Mundo.criarCaminhoPara` (ainda bloqueado na parte de execução por Tick — automação de mineração continua fora de escopo por política do projeto); suporte a NBT real em `ItemStack` (desbloquearia `nivelEficiencia` real em vez do parâmetro `0`); rastreamento de efeitos do próprio bot em `SessaoDeJogo` (desbloquearia `amplifierCeleridade`/`amplifierFadiga` reais em vez do sentinela `-1` — decisão arquitetural própria, não resolvida por esta milestone); checagem de linha de visão para combate via `Mundo.tracarRaio` direto contra uma entidade; altura de olho por tipo de mob (`CanSeeEntity` genérico); `Player` bare/Entity Action (`ComandoSneak`); restante da Milestone 7; criptografia/modo online; integração de disconnect (`ComandoReco`); estratégia de wiring/DI para produção; decisão de transporte (CLI ou API, DEC-02). Tick loop/motor de física automático — e, por consequência, mineração automática — continuam fora de escopo por política do projeto. Nenhuma DEC pendente bloqueia os candidatos remanescentes.
+
+---
+
+## Milestone 18
+
+Status
+
+CONCLUÍDA
+
+Objetivo
+
+Encerrar formalmente o bounded context de Mundo (Milestone 7), implementando o único pacote remanescente com precedente real no legado (Update Sign) e registrando a exclusão fundamentada dos 4 pacotes restantes que nunca tiveram implementação real no legado.
+
+### Incremento 18.1 — Update Sign e Encerramento Formal da Milestone 7
+
+Status
+
+Concluído
+
+Análise do legado
+
+`Handler_v18.cs` (`AdvancedBot.Client.Handler/Handler_v18.cs`, `case 51:`, id `0x33`): lê um `Location` empacotado (mesmo formato de `PacketBlockChange` — x 26 bits/y 12 bits/z 26 bits em um `long`) seguido de 4 strings (`ChatParser.ParseText` — mesmo tratamento já decidido para Chat Message na Milestone 5.3, texto mantido cru) e grava em `World.Signs` (`Dictionary<Vec3i, string[]>`, `AdvancedBot.Client.Map/World.cs`), dicionário independente das seções de chunk. Dois comportamentos do legado avaliados e não portados: a leitura é protegida por `Client.MapAndPhysics` (mesmo tratamento já dado a Explosion na Milestone 7.4 — sem equivalente no domínio Java, ignorado); e uma expurgação de placas a mais de 300 blocos do jogador a cada atualização (otimização de memória específica do C#, mesma categoria já registrada para a chave de memoização de `BuscadorDeCaminho` na DEC-27 — sem efeito observável, não portada, mesmo padrão de `Chunk`s que também nunca são expurgados por distância neste domínio). Busca exaustiva confirmada por rastreamento manual em `Handler_v18.cs` (todos os 35 `case` do switch principal enumerados) e por busca de classes `Packet*` dedicadas em todo o `Projeto Adv 2.4.5`: **nenhum precedente existe** para World Border (`0x44`), Update Block Entity (`0x35`) e Block Action (`0x24`) — nenhuma classe de pacote, nenhum `case` no Handler. Block Break Animation (`0x25`) idem. Mesma categoria de achado já registrada para Time Update/Spawn Position na Milestone 7.5 (ausência de implementação em todas as versões do Handler auditadas), agora estendida a mais 4 pacotes — cobertos com fidelidade pelo descarte seguro da DEC-20.
+
+Decisão: puramente aditiva, sem DEC nova (mesmo critério das Milestones 7.1-7.5, que também nunca precisaram de DEC própria além da DEC-20 já existente — Update Sign é só mais um pacote do mesmo bounded context Mundo já aprovado). `UpdateSignPacket`/`UpdateSignCodec`/`UpdateSignHandler`/`EventoUpdateSign`/`ReceptorUpdateSign` seguem exatamente o padrão de Block Change; `Mundo.registrarPlaca`/`placaEm` usam um novo dicionário interno (`Map<PosicaoDeBloco, String[]>`, `PosicaoDeBloco` como record privado aninhado) independente do mapa de chunks — **ao contrário de `definirBloco`, não faz no-op quando o chunk correspondente não está carregado**, fiel ao dicionário próprio do legado. World Border/Update Block Entity/Block Action/Block Break Animation permanecem deliberadamente não registrados — mesmo tratamento de Time Update/Spawn Position (DEC-20).
+
+Entregue
+
+- `domain.protocol.v1_8.UpdateSignPacket`/`UpdateSignCodec`/`UpdateSignHandler`/`EventoUpdateSign` (novos; PLAY, id `0x33`, CLIENTBOUND); sem `Receptor` próprio — `ReceptorUpdateSign` (novo) delega a `Mundo.registrarPlaca`.
+- `domain.bot.Mundo.registrarPlaca(x,y,z,linhas)`/`placaEm(x,y,z)` (novos) — porte de `World.Signs`, sem a expurgação por distância e sem o gate `Client.MapAndPhysics` (divergências documentadas acima).
+- Milestone 7 (Modelagem do Mundo) encerrada oficialmente: dos 11 pacotes candidatos originais, 7 implementados (Chunk Data, Block Change, Multi Block Change, Map Chunk Bulk, Explosion, Change Game State, Update Sign) e 4 avaliados e excluídos por ausência comprovada de precedente no legado (Time Update, Spawn Position — já excluídos na Milestone 7.5 —, e agora World Border, Update Block Entity, Block Action, Block Break Animation).
+- Nenhuma interface já aprovada foi alterada, nenhum Packet/Port/Caso de Uso/`Comando`/bounded context novo além do próprio pacote — incremento 100% aditivo.
+
+Testes
+
+`UpdateSignCodecTest` (3: round-trip preservando valores, coordenadas negativas nos limites do mundo, validação de `linhas` nulo ou com tamanho diferente de 4); `UpdateSignHandlerTest` (1: tradução para evento); `ReceptorUpdateSignTest` (1: registro no `Mundo` independente de chunk carregado); `MundoTest` (+3: registrar/recuperar placa, registrar placa sem chunk carregado, retornar nulo para placa desconhecida); `RegistroDePacotesV1_8Test` (+2: localizar Codec por id, localizar id por tipo); `PipelineDeProtocoloV1_8Test` (+1: pipeline completa).
+
+Validação executada
+
+`mvn clean test` (JDK 21.0.9, Maven 3.9.7) — BUILD SUCCESS, **693 testes executados, 0 falhas, 0 erros, 3 skipped** (mesmos 3 já registrados desde incrementos anteriores). Mudança 100% aditiva — nenhum teste pré-existente foi modificado.
+
+---
+
+## Milestone 19
+
+Status
+
+CONCLUÍDA
+
+Objetivo
+
+Adicionar um segundo consumidor ao raycast fiel ao legado entregue na DEC-24 (Milestone 13): checagem de linha de visão do bot contra a posição de um jogador remoto, primitiva de combate sem nenhuma automação associada.
+
+### Incremento 19.1 — Linha de Visão contra Jogador Remoto
+
+Status
+
+Concluído
+
+Análise do legado
+
+`Entity.CanSeePlayer`/`Entity.CanSeeEntity` (`AdvancedBot.Client/Entity.cs:442-469`): `CanSeePlayer(MPPlayer p)` traça um raio dos pés do bot (`PosX/PosY/PosZ`, sem offset de altura) até o olho do jogador-alvo (`p.X, p.Y + 1.62, p.Z` — mesma constante de altura de olho já avaliada e aceita como trivial na Milestone 13) via `World.RayCast(start, end, stopOnNonAir: false, allowWater: true)`, retornando `true` quando o raio não bate em nada (`== null`). `CanSeeEntity(IEntity)` despacha para `CanSeePlayer` quando o alvo é `MPPlayer`; para mobs, depende de `EntityProperty.Height` por tipo de mob (dado não levantado no domínio Java — mesma lacuna já registrada e deixada de fora na Milestone 13) e retorna `false` sem essa propriedade.
+
+Decisão: sem DEC nova (mesmo critério de `Mundo.tracarRaio`/DEC-24 — outro consumidor da mesma capacidade já aprovada, sem alterar contrato nenhum). Portado apenas o caminho `CanSeePlayer`, que não depende de nenhum dado ausente; `CanSeeEntity` genérico para mobs permanece fora de escopo, mesma lacuna de dado (altura por tipo de mob) já documentada na Milestone 13 e na Seção 10.
+
+Entregue
+
+- `domain.bot.SessaoDeJogo.podeVerJogador(EntidadeJogadorRemoto jogador)` (novo) — porte de `Entity.CanSeePlayer`, delega a `Mundo.tracarRaio` já existente (`pararEmNaoAr=false`/`permitirAgua=true`, olho do alvo em `y + 1.62`).
+- Nenhuma interface já aprovada foi alterada, nenhum Packet/Port/Caso de Uso/`Comando`/agregado/bounded context novo — incremento 100% aditivo, puro consumidor de capacidade já existente.
+
+Testes
+
+`SessaoDeJogoTest` (+2: linha de visão livre retorna verdadeiro sem nenhum chunk carregado, parede sólida de 3 blocos de altura entre bot e jogador retorna falso).
+
+Validação executada
+
+`mvn clean test` (JDK 21.0.9, Maven 3.9.7) — BUILD SUCCESS, **695 testes executados, 0 falhas, 0 erros, 3 skipped** (mesmos 3 já registrados desde incrementos anteriores). Mudança 100% aditiva — nenhum teste pré-existente foi modificado.
+
+---
+
+## Milestone 20
+
+Status
+
+CONCLUÍDA
+
+Objetivo
+
+Reconstruir a ação de agachar do jogador (Entity Action, subconjunto sneak) como primitiva single-shot, seguindo o mesmo padrão de ação iniciada pelo bot já estabelecido desde a DEC-21/DEC-23.
+
+### Incremento 20.1 — Entity Action (Sneak) e ComandoAgachar/ComandoPararDeAgachar
+
+Status
+
+Concluído
+
+Análise do legado
+
+`PacketEntityAction` (`AdvancedBot.Client.Packets/PacketEntityAction.cs`, id `0x0B` SERVERBOUND): `EntityID`/`ActionID`/`JumpBoost`, todos `VarInt` no fio para protocolo >= 1.8. Rastreamento completo de todo `new PacketEntityAction(...)` em `Projeto Adv 2.4.5`: `ActionID=0`/`1` (iniciar/parar agachamento) têm call site real fora de qualquer loop — `CommandSneak.cs` (comando dedicado, toggle) e `CommandTwerk.cs` (reaproveita os mesmos 2 ids). `ActionID=2` (leave bed) não tem nenhum call site em todo o projeto — código morto comprovado. `ActionID=3`/`4` (sprint) só são enviados dentro do Tick loop principal (`MinecraftClient.cs:786-793`, guardado por `if (beingTicked)`/`Player.Tick()`, comparando `Player.WasSprinting != Player.IsSprinting`) — fora de escopo, mesmo motivo da DEC-22 (motor de física/Tick automático). `ActionID=5` (jump boost/montaria) também não tem call site algum. Adicionalmente, `Player` bare (`PacketUpdate`, id `0x03`, só campo `OnGround`) foi investigado como candidato irmão (par "Player bare + Entity Action" da Seção 10): seu único call site em todo o legado (`MinecraftClient.cs:819`) está dentro do mesmo bloco de Tick acima, no `else` final da cadeia posição/rotação/sprint — enviado a cada tick quando nada mudou, puro ping de `OnGround` para o servidor. Sem nenhum call site fora do Tick loop, é excluído pelo mesmo motivo do sprint (DEC-22), não por ausência de precedente.
+
+Decisão: sem DEC nova (mesmo critério de DEC-21/DEC-23 já aplicado a Balancar Braço/Player Digging/Player Block Placement — mais uma ação single-shot iniciada pelo bot sobre o padrão já aprovado). Como o contrato `Comando` não tem `Toggle()` (excluído desde a DEC-23), o toggle único do legado (`CommandSneak`) é modelado como 2 comandos single-shot simétricos em vez de um comando com estado, mesmo padrão já usado para separar `PlayerDigging` em `iniciarQuebraDeBloco`/`cancelarQuebraDeBloco`/`finalizarQuebraDeBloco` na Milestone 10 (nenhum boolean de estado "agachado" adicionado a `SessaoDeJogo` — ação disparada e esquecida, mesmo tratamento de digging, não de posição/rotação). `Player` bare (`0x03`) e os `ActionID` 2/3/4/5 permanecem deliberadamente não portados — achados documentados acima, cobertos pelo descarte seguro da DEC-20 quando aplicável.
+
+Entregue
+
+- `domain.protocol.v1_8.EntityActionPacket`/`EntityActionCodec`/`EntityActionHandler`/`EventoEntityAction` (novos; PLAY, id `0x0B`, SERVERBOUND, sem colisão com `AnimationPacket` clientbound no mesmo id); sem `Receptor` (mesmo precedente de `EnvioDeChatPacket`/`PlayerDiggingPacket` — ação enviada pelo bot, não reagida).
+- `domain.bot.SessaoDeJogo.agachar()`/`pararDeAgachar()` (novos) — enviam `EntityActionPacket` com `actionId` 0/1 e `jumpBoost=0`, fiéis a todos os call sites legados em escopo.
+- `application.usecase.CasoDeUsoAgachar`/`CasoDeUsoPararDeAgachar` (novos, conforme DEC-21).
+- `interfaces.comando.ComandoAgachar` (aliases `agachar`/`sneak`) e `ComandoPararDeAgachar` (aliases `pararagachar`/`unsneak`), novos, delegando aos Casos de Uso acima.
+- Nenhuma interface já aprovada foi alterada, nenhum Port/agregado/bounded context novo — incremento 100% aditivo.
+
+Testes
+
+`EntityActionCodecTest` (2: round-trip preservando valores, distinção entre iniciar/parar agachamento); `EntityActionHandlerTest` (1: tradução para evento); `SessaoDeJogoTest` (+2: `agachar` envia `actionId=0`, `pararDeAgachar` envia `actionId=1`); `CasoDeUsoAgacharTest`/`CasoDeUsoPararDeAgacharTest` (2 cada: sucesso com sessão ativa, exceção sem sessão); `ComandoAgacharTest`/`ComandoPararDeAgacharTest` (2 cada, mesmo padrão); `RegistroDePacotesV1_8Test` (+2: sem colisão com Animation clientbound, localizar id por tipo); `PipelineDeProtocoloV1_8Test` (+1: pipeline completa).
+
+Validação executada
+
+`mvn clean test` (JDK 21.0.9, Maven 3.9.7) — BUILD SUCCESS, **710 testes executados, 0 falhas, 0 erros, 3 skipped** (mesmos 3 já registrados desde incrementos anteriores). Mudança 100% aditiva — nenhum teste pré-existente foi modificado.
+
+---
+
+## Milestone 21
+
+Status
+
+CONCLUÍDA
+
+Objetivo
+
+Construir a fundação da Engine de Execução Contínua do bot — ciclo de vida (iniciar/pausar/retomar/parar), scheduler genérico de tarefas periódicas e tick engine —, sem nenhuma macro/automação física. Pivô explícito de escopo: da Milestone 4 até a Milestone 20 cada milestone entregou uma capacidade isolada de protocolo/domínio; a Milestone 21 entrega, pela primeira vez, infraestrutura de execução que sustentará automações futuras, não uma automação em si.
+
+### Incremento 21.1 — Ciclo de Vida do Bot, AgendadorDeTarefasPort e MotorDeTick (DEC-29)
+
+Status
+
+Concluído
+
+Análise do legado
+
+`AdvancedBot.Client\Main.cs` (`Main_Load`, ~299-327): `Thread` dedicada (`tickThread`) percorre `Clients` a cada ~50ms (20 Hz, `Stopwatch`-timed, sem catch-up), chamando `Tick()` de cada cliente dentro de um `try{}catch{}` que isola falha de UM bot sem derrubar o ciclo inteiro. `MinecraftClient.cs.Tick()` (~755-828) só processa corpo relevante `if (beingTicked)` (flag ligada após login, desligada ao desconectar) e, quando ativo, percorre `CurrentPath.Tick()` (PathGuide — lê/escreve Motion/OnGround/física, fora de escopo) e `CmdManager.Tick()` (chama `Tick()` de TODOS os ~29 comandos incondicionalmente; `isMacro`/`currentMacro` confirmados código morto em todo o projeto). Fora do tick de 20Hz, dois timers independentes e desacoplados de física já existiam: `autReconnectTimer` (`Main.cs:178`, `Interval=15000`, reconecta bots travados) e `Statistics.timer1` (poll de 1s). Busca exaustiva por Pause/Resume/Suspend/Idle não encontrou nenhum precedente de execução no legado (só `SuspendLayout`/`ResumeLayout` de WinForms, irrelevante).
+
+Decisão: DEC-29 — resolve explicitamente que um scheduler/tick engine genérico, sem nenhuma leitura/escrita de física e sem nenhuma tarefa real registrada, não reabre o bloqueio de "Tick loop/motor de física automático" já firmado pela DEC-22/DEC-23/DEC-27 (mesma distinção "mecanismo vs. conteúdo" que a DEC-27 já usou para separar `PathFinder` de `PathGuide`). Ver DEC-29 em 01-Decisoes-Arquiteturais.md para as alternativas e a análise completa dos 4 gatilhos de parada (nenhum se aplica).
+
+Entregue
+
+- `domain.bot.EstadoExecucao` (novo enum: `PARADO`/`EXECUTANDO`/`PAUSADO` — sem precedente no legado, decisão de infraestrutura, não de fidelidade).
+- `domain.bot.Bot` ganha `estadoExecucao` (padrão `PARADO`), `iniciar()`/`pausar()`/`retomar()`/`parar()` (transições mínimas, `pausar`/`retomar` rejeitam estado inválido com `IllegalStateException`), e `tarefasContinuas`/`registrarTarefa(TarefaContinua)`/`removerTarefa(TarefaContinua)` (lista thread-safe, `CopyOnWriteArrayList`).
+- `domain.bot.TarefaContinua` (nova interface funcional, `void executar(Bot bot)`) — contrato de trabalho periódico, deliberadamente cego a física; zero implementações reais nesta milestone.
+- `application.port.AgendadorDeTarefasPort` (novo, segundo Port do projeto depois de `ConexaoBotPort`): `ScheduledFuture<?> agendar(Runnable, Duration)`, `void encerrar()`.
+- `infrastructure.execucao.AgendadorDeTarefasVirtualThread` (novo, implementa o Port): relógio de thread de plataforma única (`ScheduledExecutorService` single-thread) disparando cada execução em uma Virtual Thread nova (`Thread.ofVirtual()`, conforme DEC-03) — tarefas independentes nunca bloqueiam a cadência umas das outras.
+- `infrastructure.execucao.MotorDeTick` (novo, o "tick engine" da milestone): percorre bots registrados, pula quem não está `EXECUTANDO` (mesmo espírito de `beingTicked`), invoca cada `TarefaContinua` isolando falha por tarefa (log WARN, nunca derruba o ciclo nem as demais tarefas/bots), protegido contra reentrância (`AtomicBoolean` — um ciclo concorrente é descartado com log, não enfileirado).
+- Nenhuma interface existente alterada; nenhum Packet/Codec/Comando/bounded context novo; zero leitura/escrita de Motion/OnGround/velocidade em qualquer classe nova.
+
+Testes
+
+`BotTest` (+8: estado inicial `PARADO`, `iniciar`→`EXECUTANDO`, `pausar`→`PAUSADO`, rejeição de `pausar` a partir de `PARADO`, `retomar`→`EXECUTANDO`, rejeição de `retomar` fora de `PAUSADO`, `parar` de qualquer estado, registrar/remover `TarefaContinua`); `AgendadorDeTarefasVirtualThreadTest` (3, novo: execução periódica via `CountDownLatch`, execução de fato em Virtual Thread, `cancel(true)` interrompe disparos futuros); `MotorDeTickTest` (5, novo: executa tarefas de bot `EXECUTANDO`, ignora bot não-`EXECUTANDO`, isola falha de uma tarefa sem afetar as demais, ignora bot removido, descarta ciclo concorrente enquanto o anterior ainda executa — verificado com `CountDownLatch`, sem sleep).
+
+Validação executada
+
+`mvn clean test` (JDK 21.0.9, Maven 3.9.7) — BUILD SUCCESS, **726 testes executados, 0 falhas, 0 erros, 3 skipped** (mesmos 3 já registrados desde incrementos anteriores). Mudança 100% aditiva — nenhum teste pré-existente foi modificado.
+
+---
+
 # 6. Escopo Implementado
 
 Atualmente existem apenas componentes estruturais.
@@ -1499,15 +2199,33 @@ Implementado:
 - DEC-21 — Papel do Caso de Uso em Ações Iniciadas pelo Bot (Milestone 8, Incremento 8.1): formaliza o fluxo `CasoDeUso → SessaoDeJogo → ConexaoMinecraft → Packet → Servidor`, complementar ao fluxo reativo da DEC-19. Puramente documental, sem código.
 - Lista de Jogadores — Player List (Milestone 8, Incremento 8.2): `domain.bot.ListaDeJogadores`/`JogadorConhecido` (novo agregado, não bounded context), referenciado por `SessaoDeJogo.listaDeJogadores()`; `domain.protocol.v1_8.ItemDeListaDeJogadores` (sealed, 5 variantes) + `PlayerListItemPacket`/Codec/Handler/Evento/Receptor (PLAY, id `0x38`, CLIENTBOUND). Divergência documentada: bug de alinhamento do legado na ação 3 (UUID desconhecido) não replicado — Codec sempre lê o formato de fio completo, fiel ao precedente "Codec nunca pula bytes obrigatórios por estado de domínio".
 - Chat Enviado pelo Bot (Milestone 8, Incremento 8.3): `domain.protocol.v1_8.EnvioDeChatPacket`/Codec/Handler/Evento (PLAY, id `0x01`, SERVERBOUND, sem Receptor — mesmo precedente de `RespostaKeepAlivePacket`/`ConfirmacaoDePosicaoPacket`); `SessaoDeJogo.enviarMensagem` (trunca em 99 caracteres, fiel ao off-by-one do legado; no-op em mensagem vazia/nula); `application.usecase.CasoDeUsoEnviarMensagemDeChat` (primeiro Caso de Uso do Play State, conforme DEC-21). Primeiro pacote SERVERBOUND de Play State iniciado pelo bot (não por reação a protocolo).
+- DEC-22 — Ações Fundamentais do Jogador: Movimentação e Rotação (Milestone 9, Incremento 9.1): formaliza que a Milestone 9 implementa só o envio explícito e sob demanda de posição/rotação (sem Tick loop/física); decide reaproveitar `ConfirmacaoDePosicaoPacket` (id `0x06`) para qualquer combinado posição+rotação futuro em vez de nova classe (colisão de chave em `RegistroDePacotesV1_8`); decide mutação otimista de estado. Puramente documental, sem código.
+- Movimentação do Jogador — Player Position (Milestone 9, Incremento 9.2): `domain.protocol.v1_8.PlayerPositionPacket`/Codec/Handler/Evento (PLAY, id `0x04`, SERVERBOUND, sem colisão com `EntityEquipmentPacket` id `0x04` CLIENTBOUND); `SessaoDeJogo.mover(double,double,double,boolean)` (mutação otimista de x/y/z); `application.usecase.CasoDeUsoMoverJogador` (conforme DEC-21/DEC-22).
+- Rotação do Jogador — Player Look (Milestone 9, Incremento 9.3): `domain.protocol.v1_8.PlayerLookPacket`/Codec/Handler/Evento (PLAY, id `0x05`, SERVERBOUND); `SessaoDeJogo.olhar(float,float,boolean)` (mutação otimista de yaw/pitch); `application.usecase.CasoDeUsoRotacionarJogador` (mesmo padrão). Envio explícito e sob demanda apenas — nenhum Tick loop/física/automação implementado (motor de física continua fora de escopo, DEC-22).
+- Milestone 10 (Incremento 10.1, planejamento): nenhuma DEC nova necessária — DEC-21/DEC-22 já cobrem integralmente o padrão de ação iniciada pelo bot para as interações do jogador com o mundo; puramente documental, sem código.
+- Swing Arm (Milestone 10, Incremento 10.2): `domain.protocol.v1_8.BalancarBracoPacket`/Codec/Handler/EventoBalancarBraco (PLAY, id `0x0A`, SERVERBOUND, sem campos — nome em português para evitar colisão de classe Java com `AnimationPacket` clientbound, que reutiliza o mesmo nome oficial "Animation"); `SessaoDeJogo.balancarBraco()`; `application.usecase.CasoDeUsoBalancarBraco`.
+- Player Digging (Milestone 10, Incremento 10.3): `domain.protocol.v1_8.PlayerDiggingPacket`/Codec/Handler/EventoPlayerDigging (PLAY, id `0x07`, SERVERBOUND, sem colisão com `RespawnPacket` clientbound); `SessaoDeJogo.iniciarQuebraDeBloco`/`cancelarQuebraDeBloco`/`finalizarQuebraDeBloco` (status 0/1/2); `application.usecase.CasoDeUsoIniciarQuebraDeBloco`/`CasoDeUsoCancelarQuebraDeBloco`/`CasoDeUsoFinalizarQuebraDeBloco`. Mineração automática (AutoMiner do legado, Tick loop) deliberadamente não portada; a fórmula de força de quebra (`DiggingHelper`) foi portada depois, como primitiva pura, na Milestone 17.
+- Player Block Placement (Milestone 10, Incremento 10.4): `domain.protocol.v1_8.PlayerBlockPlacementPacket`/Codec/Handler/EventoPlayerBlockPlacement (PLAY, id `0x08`, SERVERBOUND, sem colisão com `PlayerPositionAndLookPacket` clientbound; Codec com extensão de sinal do campo y para fidelidade ao sentinela -1/-1/-1 "usar item na mão"); `SessaoDeJogo.colocarBloco`; `application.usecase.CasoDeUsoColocarBloco`. Lógica de inventário automático (seleção de item, reenvio automático para itens especiais) deliberadamente não portada.
+- Movimentação e Rotação Combinadas do Jogador — Move And Look (Milestone 11, Incremento 11.1): reaproveita `ConfirmacaoDePosicaoPacket`/Codec (PLAY, id `0x06`, SERVERBOUND, já registrado desde a Milestone 5) conforme decidido pela DEC-22 — nenhum Packet/Codec/Handler novo; `SessaoDeJogo.moverEOlhar` (mutação otimista de x/y/z/yaw/pitch); `application.usecase.CasoDeUsoMoverEOlharJogador` (conforme DEC-21).
+- Arquitetura de Execução de Comandos do Bot (Milestone 12, Incremento 12.1, DEC-23): novo subpacote `interfaces.comando` (camada `interfaces` aprovada desde a DEC-12, populada pela primeira vez) — `Comando`/`ResultadoComando`/`GerenciadorDeComandos`, contrato mínimo single-shot sem `Tick`/`Toggle`/`isMacro`; 8 comandos concretos (`ComandoMover`/`ComandoOlhar`/`ComandoMoverEOlhar`/`ComandoBalancarBraco`/`ComandoIniciarQuebraDeBloco`/`ComandoCancelarQuebraDeBloco`/`ComandoFinalizarQuebraDeBloco`/`ComandoColocarBloco`), todos delegando a Casos de Uso já aprovados das Milestones 9–10, sem nenhum pacote/Port/agregado novo. `CommandHelp`/`CommandPlayerList`/`CommandMove`/`CommandGoto`/`CommandSneak` e os comandos de automação/inventário/combate do legado avaliados e deliberadamente não portados nesta milestone (ver subseção da Milestone 12 para o motivo específico de cada um).
+- Raycast Fiel ao Legado sobre Mundo (Milestone 13, Incremento 13.1, DEC-24): `domain.protocol.v1_8.Bloco.solido()` (porte de `Blocks.IsSolid`); `domain.bot.Mundo.tracarRaio(...)` (porte de `World.RayCast`, incluindo o quirk do bloco de destino nunca testado e a semântica de `permitirAgua`); `domain.bot.ResultadoDoRaio` (novo record, porte de `HitResult`); `domain.bot.SessaoDeJogo.tracarRaioParaBlocos(alcance)` (porte de `RayCastBlocks`/`GetLookVector`/`CalculateLookVector`); correção de bounds-check em `Mundo.blocoEm` fiel a `World.GetBlock` (evita `ArrayIndexOutOfBoundsException` para y fora de `[0,256)`). Sem Packet/Port/Use Case novo. `CanSeeEntity` genérico (altura por tipo de mob) deliberadamente não portado — ver subseção da Milestone 13.
+- Ações de Bloco com Auto-Mira (Milestone 14, Incremento 14.1, DEC-25): `domain.bot.SessaoDeJogo.olharParaBloco(x,y,z)` (porte de `Entity.LookTo`/`LookToBlock`, sem o jitter aleatório do legado) e `usarItemNaMao(item)` (porte do sentinela `-1`/`-1`/`-1` de `PacketBlockPlace(ItemStack)`, fecha a lacuna do Incremento 10.4); `application.usecase.CasoDeUsoOlharParaBloco`/`CasoDeUsoUsarItemNaMao`; `interfaces.comando.ComandoClicarBloco` (porte de `CommandClickBlock`), `ComandoQuebrarBloco` (porte do caminho base de `CommandBreakBlock`, sem `ncp`/`at`), `ComandoColocarBlocoAutoMira` (porte de `CommandPlaceBlock`, alias distinto de `ComandoColocarBloco`/Milestone 12 para não colidir com "placeblock"). Sem Packet/Port/agregado novo — consome integralmente o raycast entregue pela DEC-24.
+- Infraestrutura de Saída de Mensagens para o Operador (Milestone 15, Incremento 15.1, DEC-26): `domain.bot.SaidaDoOperador` (porte de `ChatMessages`/`MaximumChatLines`, regime permanente de 151 mensagens); `Bot` ganha o campo `saidaDoOperador`; `GerenciadorDeComandos.executar` ganha as mensagens de fallback de `CommandManagerNew.RunCommand`; `interfaces.comando.ComandoAjuda` (porte de `CommandHelp`) e `ComandoListarJogadores` (porte de `CommandPlayerList`). Sem Packet/Port/agregado/bounded context novo, nenhuma interface pública alterada.
+- Algoritmo de Busca de Caminho sobre Mundo (Milestone 16, Incremento 16.1, DEC-27): `domain.bot.PontoDeCaminho` (novo, porte de `PathPoint`) e `domain.bot.BuscadorDeCaminho` (novo, package-private, porte de `PathFinder`+`Path`, sem o branch inalcançável `NodeType._2`); `Mundo.criarCaminhoPara(...)` (porte de `World.CreatePathTo`); `SessaoDeJogo.criarCaminhoPara(destX,destY,destZ)` (conveniência com os valores fixos do único call site do legado). `PathGuide` (execução do caminho tick a tick, dependente de física/Motion que não existe no domínio Java) e todos os seus consumidores (`CommandGoto`/`CommandFollow`/`CommandPortal`/`AutoMiner`) permanecem deliberadamente fora de escopo — a DEC-22 (motor de física fora de escopo) não é reaberta. Sem Packet/Port/Caso de Uso/`Comando`/bounded context novo.
+- Registro de Blocos e Calculadora de Força de Quebra (Milestone 17, Incremento 17.1, DEC-28): `domain.protocol.v1_8.RegistroDeBlocos` (novo, package-private, porte de `Blocks`/`Block` — só `Hardness`/`Material`/`HarvestTools`, os únicos 3 campos com consumidor comprovado) e `CalculadoraDeQuebraDeBloco` (novo, público, porte completo de `DiggingHelper` — `podeColher`/`forcaDaFerramenta`/`forcaDoJogador`/`forcaDeQuebra`); `SessaoDeJogo.estaSubmerso()` (novo, porte de `Entity.IsUnderWater`). Nível de Efficiency da ferramenta, amplifier de Haste e de Mining Fatigue do próprio bot viram parâmetros explícitos (sentinela `0`/`-1`) por não terem estado equivalente no domínio Java ainda (NBT de item não exposto desde a Milestone 5.5; efeitos do próprio bot não modelados desde a Milestone 5.6.4). `AutoMiner`/`CommandMiner`/`CommandBreakBlock` (Tick loop) permanecem deliberadamente fora de escopo. Sem Packet/Port/Caso de Uso/`Comando`/bounded context novo.
+- Update Sign e encerramento formal da Milestone 7 (Milestone 18, Incremento 18.1): `domain.protocol.v1_8.UpdateSignPacket`/Codec/Handler/EventoUpdateSign/ReceptorUpdateSign (PLAY, id `0x33`, CLIENTBOUND); `Mundo.registrarPlaca`/`placaEm` (novo dicionário interno independente do mapa de chunks, sem no-op para chunk não carregado — divergência fiel ao `World.Signs` do legado). World Border (`0x44`), Update Block Entity (`0x35`), Block Action (`0x24`) e Block Break Animation (`0x25`) avaliados e confirmados **sem nenhum precedente** em todo o `Handler_v18.cs`/`Projeto Adv 2.4.5` — cobertos pelo descarte seguro da DEC-20, mesmo tratamento de Time Update/Spawn Position. Bounded context de Mundo (Milestone 7) encerrado oficialmente. Sem DEC nova.
+- Linha de Visão contra Jogador Remoto (Milestone 19, Incremento 19.1): `domain.bot.SessaoDeJogo.podeVerJogador(EntidadeJogadorRemoto)` (novo, porte de `Entity.CanSeePlayer`), segundo consumidor de `Mundo.tracarRaio`/DEC-24. `CanSeeEntity` genérico para mobs permanece fora de escopo (depende de altura por tipo de mob, dado ainda não levantado). Sem Packet/Port/Caso de Uso/`Comando`/agregado/bounded context novo, sem DEC nova.
+- Entity Action — Sneak (Milestone 20, Incremento 20.1): `domain.protocol.v1_8.EntityActionPacket`/Codec/Handler/EventoEntityAction (PLAY, id `0x0B`, SERVERBOUND, sem colisão com `AnimationPacket` clientbound; sem Receptor, mesmo precedente de `EnvioDeChatPacket`); `SessaoDeJogo.agachar()`/`pararDeAgachar()` (`actionId` 0/1, `jumpBoost` sempre 0); `application.usecase.CasoDeUsoAgachar`/`CasoDeUsoPararDeAgachar`; `interfaces.comando.ComandoAgachar`/`ComandoPararDeAgachar`. `ActionID` 2 (leave bed) e 5 (jump boost) confirmados como código morto (nenhum call site no legado); `ActionID` 3/4 (sprint) e `Player` bare (`0x03`, `PacketUpdate`) confirmados como Tick-loop-only (único call site de cada um dentro do loop de física do `MinecraftClient.cs`) — mesmo motivo de exclusão da DEC-22, não ausência de precedente. Sem Packet/Port/agregado/bounded context novo, sem DEC nova.
+- Fundação da Engine de Execução Contínua (Milestone 21, Incremento 21.1, DEC-29): `domain.bot.EstadoExecucao` (novo enum `PARADO`/`EXECUTANDO`/`PAUSADO`, sem precedente no legado); `Bot` ganha ciclo de vida (`iniciar`/`pausar`/`retomar`/`parar`) e registro de tarefas contínuas (`registrarTarefa`/`removerTarefa`/`tarefasContinuas`); `domain.bot.TarefaContinua` (nova interface funcional, `void executar(Bot)`, zero implementações reais); `application.port.AgendadorDeTarefasPort` (novo, segundo Port do projeto); `infrastructure.execucao.AgendadorDeTarefasVirtualThread` (implementa o Port sobre Virtual Threads, DEC-03) e `MotorDeTick` (percorre bots `EXECUTANDO` e invoca suas `TarefaContinua`, isolando falha por tarefa, protegido contra reentrância). Mecanismo puro de agendamento/iteração — zero leitura/escrita de Motion/OnGround/física; nenhuma macro/automação registrada; não reabre DEC-22/DEC-23/DEC-27 (ver DEC-29). Sem Packet/Comando/bounded context novo.
 
 Não implementado:
 
 - Serviços
 - Repositórios
 - APIs REST
-- Scheduler
+- Scheduler distribuído (multi-nó/multi-JVM) — o scheduler single-JVM em processo já existe desde a Milestone 21 (`AgendadorDeTarefasPort`/`MotorDeTick`), sem nenhuma tarefa real registrada ainda
 - Rede/Protocolo Minecraft (criptografia AES/RSA real e autenticação Mojang para servidores em modo online, Session Server, Status State)
-- Demais pacotes do estado PLAY (Entity Metadata `0x1C` — coberto apenas pelo descarte seguro da DEC-20, sem semântica exposta —, combate, movimentação livre do bot, XP/Experience — sem precedente no C# auditado, mesmo tratamento de Time Update/Spawn Position); do bounded context de Mundo, restam World Border, Update Sign, Update Block Entity, Block Action e Block Break Animation (Chunk Data, Block Change, Multi Block Change, Map Chunk Bulk, Explosion e Change Game State já implementados — ver Milestone 7). Time Update (`0x03`) e Spawn Position (`0x05`) foram avaliados e permanecem deliberadamente não registrados (nenhuma versão do C# legado jamais os implementou — coberto com fidelidade pelo descarte seguro da DEC-20; ver Incremento 7.5). Player List/tab list e Chat Enviado pelo Bot **implementados** — ver Milestone 8.
+- Demais pacotes do estado PLAY (Entity Metadata `0x1C` — coberto apenas pelo descarte seguro da DEC-20, sem semântica exposta —, combate, XP/Experience — sem precedente no C# auditado, mesmo tratamento de Time Update/Spawn Position); bounded context de Mundo (Milestone 7) **encerrado oficialmente na Milestone 18** — Chunk Data, Block Change, Multi Block Change, Map Chunk Bulk, Explosion, Change Game State e Update Sign implementados; Time Update (`0x03`), Spawn Position (`0x05`), World Border (`0x44`), Update Block Entity (`0x35`), Block Action (`0x24`) e Block Break Animation (`0x25`) avaliados e confirmados sem nenhum precedente no C# legado — cobertos com fidelidade pelo descarte seguro da DEC-20 (ver Incrementos 7.5 e 18.1). Player List/tab list e Chat Enviado pelo Bot **implementados** — ver Milestone 8. Movimentação (Player Position `0x04`) e rotação (Player Look `0x05`) do jogador **implementadas** — ver Milestone 9. Swing Arm (`0x0A`), Player Digging (`0x07`) e Player Block Placement (`0x08`) **implementados** — ver Milestone 10; mineração automática, física de quebra e "usar item na mão" (sentinela -1/-1/-1, Codec já suporta) continuam fora de escopo. Combinação posição+rotação iniciada pelo bot **implementada** — ver Milestone 11 (reaproveita `ConfirmacaoDePosicaoPacket`, DEC-22); Tick loop/motor de física automático continua fora de escopo. Entity Action `0x0B` serverbound **implementado para o subconjunto sneak** (`actionId` 0/1) — ver Milestone 20; leave bed/jump boost são código morto comprovado no legado, sprint e `Player` bare `0x03` só têm call site dentro do Tick loop de física (mesmo motivo de exclusão da DEC-22).
 - Interação com inventário: clique, uso de itens, crafting, baús/janelas não-jogador (Open Window/Close Window/Confirm Transaction não implementados)
 - NBT de itens (encantamentos, nome customizado, lore) — consumido do protocolo mas descartado, nunca exposto como dado de domínio
 - Parser de `ChatComponent` (cores, `translate`, extras) — texto do chat permanece como JSON cru
@@ -1581,18 +2299,43 @@ Exemplo:
 
 Nome
 
-Milestone 5 — Play State
+Milestone 22 — candidata, ainda não escolhida pelo responsável do projeto
 
-Objetivos (conforme Fase 5 do [07-Plano-de-Migracao-e-Estrategia-de-Implementacao.md](07-Plano-de-Migracao-e-Estrategia-de-Implementacao.md))
+Histórico (Milestones 5 a 21, todas concluídas — mantido por rastreabilidade)
 
-- Entre as três frentes candidatas registradas ao encerrar a Milestone 4 (criptografia AES-CFB8/modo online, Play State, integração de disconnect/DI), o responsável do projeto escolheu **Play State**. Criptografia/modo online e a integração de `CasoDeUsoDesconectarBot`/`ConexaoBotPort.disconnect()` permanecem candidatas para uma milestone futura — não descartadas, apenas não escolhidas agora.
-- Fase de planejamento concluída e aprovada (ver "Milestone 5 → Fase de Planejamento" acima): desenho arquitetural completo, DEC-19 (retenção da Sessão de Jogo e roteamento de eventos) e DEC-20 (tolerância a pacotes PLAY não registrados) formalizadas.
-- Incrementos 1 a 5 concluídos (retenção de sessão/roteamento; Keep Alive/Join Game/Player Position And Look/Disconnect; Chat Message recebido do servidor; Update Health/Respawn — estado de vida do jogador; Inventário do Jogador — Window Items/Set Slot/Held Item Change) — ver subseções acima.
-- Fase de Planejamento do Incremento 6 (Modelagem das Entidades do Mundo) concluída e aprovada, com adição de escopo (Incremento 6.4); Incrementos 6.1 (fundação), 6.2 (movimentação), 6.3 (velocidade) e 6.4 (estado visual — equipamento, animação, status, efeitos) concluídos — ver subseções acima. Incremento 6 encerrado por completo.
-- Próximo passo: a frente de Mundo (mundo/chunks/blocos) teve sua fase de planejamento concluída e os Incrementos 7.0 (DEC-20), 7.1 (Chunk Data), 7.2 (Block Change/Multi Block Change), 7.3 (Map Chunk Bulk), 7.4 (Explosion) e 7.5 (Change Game State) implementados — ver Milestone 7. Time Update e Spawn Position avaliados e deliberadamente mantidos não registrados (sem precedente no legado). Milestone 8 concluiu Player List/tab list e Chat Enviado pelo Bot (DEC-21) — ver Milestone 8. Combate/automação continua fora de escopo por política do projeto; movimentação livre do bot continua bloqueada por uma decisão pendente sobre motor de física (o legado acopla envio de posição/rotação a `Player.Tick()`, um motor de física completo nunca portado para o Java). Nenhuma DEC pendente bloqueia os demais candidatos.
-- Definir a estratégia de wiring/DI para a fábrica de conexão em produção (Spring `@Configuration` ou factory manual — nenhum padrão foi estabelecido ainda, `infrastructure.config` permanece vazio) continua em aberto; não bloqueia os próximos incrementos.
+- Milestone 5 — Play State: fase de planejamento (DEC-19, DEC-20), Incrementos 1 a 5 (retenção de sessão/roteamento; Keep Alive/Join Game/Player Position And Look/Disconnect; Chat Message recebido; Update Health/Respawn; Inventário — Window Items/Set Slot/Held Item Change) e Incremento 6 completo (6.1 fundação de entidades, 6.2 movimentação, 6.3 velocidade, 6.4 estado visual) — ver subseções da Milestone 5.
+- Milestone 7 — Modelagem do Mundo: Incrementos 7.0 (DEC-20 implementada), 7.1 (Chunk Data), 7.2 (Block Change/Multi Block Change), 7.3 (Map Chunk Bulk), 7.4 (Explosion), 7.5 (Change Game State) — ver subseções da Milestone 7.
+- Milestone 8: Incremento 8.1 (DEC-21 — papel do Caso de Uso em ações iniciadas pelo bot), 8.2 (Player List `0x38`), 8.3 (Chat Enviado pelo Bot, primeiro Caso de Uso do Play State) — ver subseções da Milestone 8.
+- Milestone 9: Incremento 9.1 (DEC-22 — movimentação/rotação, mutação otimista de estado), 9.2 (Player Position `0x04`), 9.3 (Player Look `0x05`) — ver subseções da Milestone 9.
+- Milestone 10: Incremento 10.1 (planejamento — nenhuma DEC nova necessária), 10.2 (Swing Arm `0x0A`), 10.3 (Player Digging `0x07` — início/cancelamento/término, sem mineração automática), 10.4 (Player Block Placement `0x08`, sem lógica de inventário automático) — ver subseções da Milestone 10.
+- Milestone 11: Incremento 11.1 (Movimentação e Rotação Combinadas — reaproveita `ConfirmacaoDePosicaoPacket`/Codec `0x06` conforme DEC-22, nenhuma DEC nova, nenhum Packet/Codec/Handler novo) — ver subseção da Milestone 11.
+- Milestone 12: Incremento 12.1 (DEC-23 — Arquitetura de Execução de Comandos do Bot; `interfaces.comando` populado pela primeira vez; `Comando`/`ResultadoComando`/`GerenciadorDeComandos`; 8 comandos concretos sobre Casos de Uso já aprovados; nenhum pacote/Port/agregado novo) — ver subseção da Milestone 12.
+- Milestone 13: Incremento 13.1 (DEC-24 — Raycast Fiel ao Legado sobre Mundo; `Mundo.tracarRaio` porta `World.RayCast`, `Bloco.solido()` porta `Blocks.IsSolid`, `SessaoDeJogo.tracarRaioParaBlocos` porta `RayCastBlocks`; correção de bounds-check em `Mundo.blocoEm`; nenhum Packet/Port/Use Case novo) — ver subseção da Milestone 13.
+- Milestone 14: Incremento 14.1 (DEC-25 — Ações de Bloco com Auto-Mira; `SessaoDeJogo.olharParaBloco`/`usarItemNaMao` novos; `ComandoClicarBloco`/`ComandoQuebrarBloco`/`ComandoColocarBlocoAutoMira` portam `CommandClickBlock`/`CommandBreakBlock`/`CommandPlaceBlock` consumindo o raycast da DEC-24; nenhum Packet/Port/agregado novo) — ver subseção da Milestone 14.
+- Milestone 15: Incremento 15.1 (DEC-26 — Infraestrutura de Saída de Mensagens para o Operador; `domain.bot.SaidaDoOperador` porta `ChatMessages`/`MaximumChatLines` do legado; `Bot` ganha o campo `saidaDoOperador`; `GerenciadorDeComandos.executar` ganha mensagens de fallback do `CommandManagerNew`; `ComandoAjuda`/`ComandoListarJogadores` portam `CommandHelp`/`CommandPlayerList`; nenhum Packet/Port/agregado/bounded context novo, nenhuma interface pública alterada) — ver subseção da Milestone 15.
+- Milestone 16: Incremento 16.1 (DEC-27 — Infraestrutura de PathFinding: Algoritmo Puro vs. Execução por Tick; `domain.bot.PontoDeCaminho`/`BuscadorDeCaminho` portam `PathPoint`/`PathFinder`+`Path` do legado; `Mundo.criarCaminhoPara`/`SessaoDeJogo.criarCaminhoPara` novos; `PathGuide` e seus consumidores permanecem fora de escopo sem reabrir a DEC-22; branch morto `NodeType._2` e parâmetro morto `canDrown` comprovados e não portados; nenhum Packet/Port/Caso de Uso/`Comando`/bounded context novo) — ver subseção da Milestone 16.
+- Milestone 17: Incremento 17.1 (DEC-28 — Calculadora de Força de Mineração: Fórmula Pura com Parâmetros Explícitos para Estado Ausente; `domain.protocol.v1_8.RegistroDeBlocos` (package-private, porte de `Blocks`/`Block` — só `Hardness`/`Material`/`HarvestTools`) e `CalculadoraDeQuebraDeBloco` (público, porte completo de `DiggingHelper`) novos; `SessaoDeJogo.estaSubmerso()` novo; nível de Efficiency/amplifier de Haste/amplifier de Mining Fatigue viram parâmetros explícitos (sentinela `-1`/`0`) por não terem estado equivalente no domínio Java ainda; nenhum Packet/Port/Caso de Uso/`Comando`/bounded context novo) — ver subseção da Milestone 17.
+- Milestone 18: Incremento 18.1 (Update Sign `0x33` — porte completo de `Handler_v18.cs case 51`; `Mundo.registrarPlaca`/`placaEm` novos; World Border/Update Block Entity/Block Action/Block Break Animation confirmados sem nenhum precedente no legado após busca exaustiva; bounded context de Mundo/Milestone 7 encerrado oficialmente; sem DEC nova) — ver subseção da Milestone 18.
+- Milestone 19: Incremento 19.1 (Linha de Visão contra Jogador Remoto — `SessaoDeJogo.podeVerJogador` porta `Entity.CanSeePlayer`, segundo consumidor de `Mundo.tracarRaio`/DEC-24; `CanSeeEntity` genérico para mobs permanece fora de escopo por falta de dado de altura por tipo de mob; sem DEC nova) — ver subseção da Milestone 19.
+- Milestone 20: Incremento 20.1 (Entity Action `0x0B` serverbound, subconjunto sneak — `SessaoDeJogo.agachar`/`pararDeAgachar`, `ComandoAgachar`/`ComandoPararDeAgachar` novos, conforme DEC-21; `ActionID` 2/5 confirmados código morto, `ActionID` 3/4 (sprint) e `Player` bare `0x03` confirmados Tick-loop-only no legado — mesmo motivo de exclusão da DEC-22; sem DEC nova) — ver subseção da Milestone 20.
+- Milestone 21: Incremento 21.1 (DEC-29 — Fundação da Engine de Execução Contínua; `domain.bot.EstadoExecucao`/ciclo de vida em `Bot` (`iniciar`/`pausar`/`retomar`/`parar`) e registro de tarefas (`TarefaContinua`/`registrarTarefa`/`removerTarefa`); `application.port.AgendadorDeTarefasPort` (segundo Port do projeto) e `infrastructure.execucao.AgendadorDeTarefasVirtualThread`/`MotorDeTick` novos; mecanismo genérico de agendamento/tick sobre Virtual Threads (DEC-03), sem nenhuma leitura/escrita de física e sem nenhuma tarefa real registrada — DEC-29 resolve explicitamente que isso não reabre DEC-22/DEC-23/DEC-27; pivô de escopo — primeira milestone desde a 4 que entrega infraestrutura de execução em vez de capacidade isolada de protocolo) — ver subseção da Milestone 21.
 
-Aprovada para início de implementação — plano resumido apresentado e aprovado pelo responsável do projeto, DEC-19, DEC-20 e DEC-21 formalizadas, conforme processo do CLAUDE.md.
+Candidatos para Milestone 22 (nenhum escolhido ainda; nenhuma DEC pendente bloqueia qualquer um deles)
+
+- Altura de olho por tipo de mob (`EntityProperty.Height` do legado) — desbloquearia um `CanSeeEntity` genérico sobre `Mundo.tracarRaio` para combate contra mobs (jogadores já cobertos desde a Milestone 19 via `podeVerJogador`/constante `1.62`; levantar a altura por tipo de mob é um levantamento de dados maior, avaliado e deixado de fora desde a Milestone 13).
+- Criptografia AES-CFB8/modo online e integração de `CasoDeUsoDesconectarBot`/`ConexaoBotPort.disconnect()` — candidatas desde o encerramento da Milestone 4, ainda não escolhidas (a segunda desbloquearia também um `ComandoReco`).
+- Definir a estratégia de wiring/DI para a fábrica de conexão em produção e para o catálogo de comandos (Spring `@Configuration` ou factory manual — `infrastructure.config` permanece vazio) continua em aberto; não bloqueia nenhum candidato.
+- Decisão de transporte para o operador (CLI ou API, DEC-02 ainda não decidida) — único jeito de efetivamente consumir `SaidaDoOperador` (Milestone 15) fora dos testes.
+- Um `Comando`/macro de mineração completa que consuma `CalculadoraDeQuebraDeBloco` (Milestone 17) + `Mundo.criarCaminhoPara`/`SessaoDeJogo.criarCaminhoPara` (Milestone 16), registrada como `TarefaContinua` no `MotorDeTick` (Milestone 21) — as primitivas de cálculo/navegação e agora também o mecanismo de execução existem, mas nenhum consumidor de produção foi construído ainda (mesma situação inicial de `Mundo.tracarRaio` após a DEC-24); qualquer `TarefaContinua` real que leia/escreva estado de física precisará da mesma análise "isso reabre a DEC-22?" já resolvida pela DEC-29 para o mecanismo em si, feita agora para o conteúdo concreto.
+- AutoReconnect — desbloqueado pela Milestone 21: `AgendadorDeTarefasPort.agendar(Runnable, Duration)` já cobre o mecanismo genérico que `autReconnectTimer` do legado precisaria; falta só a lógica de reconexão em si (fora de escopo da Milestone 21 por instrução explícita).
+- Proxy por bot — candidata de infraestrutura de rede, independente da engine de execução; ainda não desenhada.
+- Suporte a NBT real em `ItemStack` (encantamentos/nome customizado/lore) — desbloquearia `nivelEficiencia` real em `CalculadoraDeQuebraDeBloco.forcaDoJogador` em vez do parâmetro `0` (Milestone 17/DEC-28); também serviria outros consumidores (crafting, display).
+- Rastreamento de efeitos do próprio bot (Haste/Mining Fatigue e demais) — hoje `EntidadeRemota.efeitosAtivos` só cobre entidades remotas (`ReceptorEntityEffect`, Milestone 5.6.4); desbloquearia `amplifierCeleridade`/`amplifierFadiga` reais em `CalculadoraDeQuebraDeBloco.forcaDoJogador` em vez do sentinela `-1` (Milestone 17/DEC-28) — decisão arquitetural própria (`SessaoDeJogo` vs. reaproveitar `EntidadeRemota`), ainda não tomada.
+- DI de produção (wiring de `AgendadorDeTarefasPort`/`MotorDeTick`/`ConexaoBotPort` via Spring `@Configuration`) e CLI/API para o operador iniciar/pausar/parar um bot — `infrastructure.config` permanece vazio; explicitamente adiado pela Milestone 21.
+
+Candidatos encerrados nas Milestones 18-21 (não reabrir sem novo motivo): checagem de linha de visão contra entidade (Milestone 19); `Player` bare/Entity Action → `ComandoSneak` (Milestone 20 — subconjunto sneak implementado, leave bed/jump boost são código morto comprovado, sprint e `Player` bare são Tick-loop-only, todos fora de escopo por DEC-22, não por lacuna de precedente); restante da Milestone 7 (Milestone 18 — bounded context de Mundo encerrado oficialmente); fundação de execução contínua/scheduler/tick engine (Milestone 21 — DEC-29 entrega o mecanismo; ver candidato de macro de mineração acima para o que continua em aberto).
+
+Fora de escopo por política do projeto (não candidatos): conteúdo de física/automação dentro de qualquer `TarefaContinua` (leitura/escrita de Motion/OnGround/velocidade — e, por consequência, `PathGuide`/execução de caminho tick a tick — Milestone 16 —, mineração automática — Milestone 17 —, sprint e `Player` bare — Milestone 20), combate/automação, lógica de inventário automático — nenhum desses é reconsiderado a cada milestone; permanecem bloqueados por decisão de escopo, não por dependência técnica. Desde a DEC-29 (Milestone 21), o *mecanismo* de scheduler/tick engine deixou de estar nesta lista — só o *conteúdo* físico/automático permanece bloqueado; ver DEC-29 para a distinção completa.
 
 ---
 
@@ -1600,7 +2343,7 @@ Aprovada para início de implementação — plano resumido apresentado e aprova
 
 Resumo da próxima atividade que deverá ser executada pela IA.
 
-Milestone 5 (Incrementos 1 a 6, com os 4 sub-incrementos de Entidades) concluída no que diz respeito a Play State básico/entidades. Milestone 7 (Modelagem do Mundo) com Incrementos 7.0 a 7.5 concluídos (ver subseções da Milestone 7 acima). Milestone 8 concluída no que diz respeito aos Incrementos 8.1 (DEC-21 — papel do Caso de Uso em ações iniciadas pelo bot), 8.2 (Lista de Jogadores/Player List `0x38`) e 8.3 (Chat Enviado pelo Bot — `EnvioDeChatPacket` `0x01` SERVERBOUND, `CasoDeUsoEnviarMensagemDeChat`, primeiro Caso de Uso do Play State) — 492 testes automatizados, 0 falhas (ver subseções da Milestone 8 acima). Nenhuma tarefa de código pendente para os Incrementos 8.1–8.3. Próximo passo: candidatos não comprometidos — restante da Milestone 7 (Update Sign `0x33`, e os pacotes sem precedente no C# validados contra a especificação do protocolo 47: Update Block Entity, Block Action, Block Break Animation, World Border) — a critério do responsável do projeto. Movimentação livre do bot e combate/automação permanecem fora de escopo (a primeira por exigir uma decisão explícita sobre motor de física, ainda pendente; a segunda por política do projeto). Nenhuma DEC pendente bloqueia os candidatos remanescentes.
+Milestones 5 a 21 concluídas — ver Seção 5 (subseções por milestone) e Seção 10 (histórico condensado) acima. Milestone 21 (mais recente): Incremento 21.1 (DEC-29 — Fundação da Engine de Execução Contínua — pivô de escopo: pela primeira vez desde a Milestone 4, a entrega é infraestrutura de execução, não uma capacidade isolada de protocolo. Novos `domain.bot.EstadoExecucao` (`PARADO`/`EXECUTANDO`/`PAUSADO`, sem precedente no legado); `Bot` ganha `iniciar()`/`pausar()`/`retomar()`/`parar()` e `registrarTarefa`/`removerTarefa`/`tarefasContinuas`; `domain.bot.TarefaContinua` (interface funcional `void executar(Bot)`, zero implementações reais); `application.port.AgendadorDeTarefasPort` (segundo Port do projeto, `agendar(Runnable,Duration)`/`encerrar()`); `infrastructure.execucao.AgendadorDeTarefasVirtualThread` (relógio single-thread disparando cada execução em Virtual Thread nova, DEC-03) e `MotorDeTick` (percorre bots `EXECUTANDO`, invoca `TarefaContinua` isolando falha por tarefa, protegido contra reentrância). DEC-29 resolve explicitamente que o mecanismo — sem nenhuma leitura/escrita de física e sem nenhuma tarefa real registrada — não reabre o bloqueio de "Tick loop/motor de física automático" já firmado pela DEC-22/DEC-23/DEC-27 (mesma distinção "mecanismo vs. conteúdo" da própria DEC-27); nenhum Packet/Comando/bounded context novo, nenhuma interface existente alterada) — 726 testes automatizados, 0 falhas, 0 erros, 3 skipped deliberadamente. Nenhuma tarefa de código pendente para o Incremento 21.1. Próximo passo: candidatos não comprometidos listados na Seção 10 (altura de olho por tipo de mob que desbloquearia `CanSeeEntity` genérico; criptografia/modo online; integração de disconnect que desbloquearia `ComandoReco`; AutoReconnect real sobre `AgendadorDeTarefasPort`; Proxy por bot; um `Comando`/macro de mineração completa registrada como `TarefaContinua` no `MotorDeTick`, consumindo `CalculadoraDeQuebraDeBloco`+`criarCaminhoPara`; suporte a NBT real em `ItemStack` para `nivelEficiencia` real; rastreamento de efeitos do próprio bot para `amplifierCeleridade`/`amplifierFadiga` reais; DI de produção e decisão de transporte CLI/API — DEC-02 — para efetivamente consumir `SaidaDoOperador` e operar o ciclo de vida do bot) — a critério do responsável do projeto. Conteúdo de física/automação dentro de qualquer `TarefaContinua` (e `PathGuide`/mineração automática/sprint por consequência) e combate/automação permanecem fora de escopo por política do projeto — só o mecanismo de agendamento deixou de estar bloqueado (DEC-29). Nenhuma DEC pendente bloqueia os candidatos remanescentes.
 
 ---
 
@@ -1646,6 +2389,24 @@ Milestone 5 (Incrementos 1 a 6, com os 4 sub-incrementos de Entidades) concluíd
 | 2026-07-20 | Milestone 8 (incremento 8.1): DEC-21 — Papel do Caso de Uso em Ações Iniciadas pelo Bot no Estado PLAY, formalizando o fluxo CasoDeUso→SessaoDeJogo→ConexaoMinecraft→Packet→Servidor complementar à DEC-19; puramente documental | ✔ |
 | 2026-07-20 | Milestone 8 (incremento 8.2): Lista de Jogadores — ListaDeJogadores/JogadorConhecido (domain.bot, novo agregado interno de SessaoDeJogo); ItemDeListaDeJogadores (sealed, 5 variantes)/PlayerListItemPacket/Codec/Handler/EventoPlayerListItem/ReceptorPlayerListItem (0x38, PLAY/CLIENTBOUND); divergência documentada: bug de alinhamento do legado na ação 3 (UUID desconhecido) não replicado, Codec sempre fiel ao formato de fio; nenhuma DEC nova (DEC-21 já cobre o padrão) | ✔ |
 | 2026-07-20 | Milestone 8 (incremento 8.3): Chat Enviado pelo Bot — EnvioDeChatPacket/Codec/Handler/EventoEnvioDeChat (0x01, PLAY/SERVERBOUND, sem Receptor, mesmo precedente de RespostaKeepAlive/ConfirmacaoDePosicao); SessaoDeJogo.enviarMensagem (trunca em 99 caracteres, fiel ao off-by-one do legado; no-op em mensagem vazia/nula); CasoDeUsoEnviarMensagemDeChat (primeiro Caso de Uso do Play State, conforme DEC-21); nenhum Port novo; 492 testes automatizados, 0 falhas | ✔ |
+| 2026-07-20 | Milestone 9 (incremento 9.1): DEC-22 — Ações Fundamentais do Jogador (Movimentação e Rotação); formaliza envio explícito sob demanda (sem Tick loop/física); decide reaproveitar ConfirmacaoDePosicaoPacket (id 0x06) para futuro combinado posição+rotação em vez de nova classe (colisão de chave em RegistroDePacotesV1_8); decide mutação otimista de estado; puramente documental | ✔ |
+| 2026-07-20 | Milestone 9 (incremento 9.2): Movimentação do Jogador — PlayerPositionPacket/Codec/Handler/EventoPlayerPosition (0x04, PLAY/SERVERBOUND, sem colisão com EntityEquipmentPacket 0x04 CLIENTBOUND); SessaoDeJogo.mover (mutação otimista de x/y/z); CasoDeUsoMoverJogador (conforme DEC-21/DEC-22); nenhum Port novo | ✔ |
+| 2026-07-20 | Milestone 9 (incremento 9.3, encerramento): Rotação do Jogador — PlayerLookPacket/Codec/Handler/EventoPlayerLook (0x05, PLAY/SERVERBOUND); SessaoDeJogo.olhar (mutação otimista de yaw/pitch); CasoDeUsoRotacionarJogador (mesmo padrão); nenhum Port novo; nenhuma física/Tick loop/automação; 511 testes automatizados, 0 falhas, 3 skipped deliberadamente | ✔ |
+| 2026-07-21 | Milestone 10 (incremento 10.1, planejamento): análise arquitetural das interações do jogador com o mundo — DEC-21/DEC-22 já cobrem integralmente o padrão de ação iniciada pelo bot; nenhuma DEC nova, nenhum Port novo, nenhum agregado novo; puramente documental | ✔ |
+| 2026-07-21 | Milestone 10 (incremento 10.2): Swing Arm — BalancarBracoPacket/Codec/Handler/EventoBalancarBraco (0x0A, PLAY/SERVERBOUND, sem campos, nome em português para evitar colisão com AnimationPacket clientbound); SessaoDeJogo.balancarBraco(); CasoDeUsoBalancarBraco; nenhum Port novo | ✔ |
+| 2026-07-21 | Milestone 10 (incremento 10.3): Player Digging — PlayerDiggingPacket/Codec/Handler/EventoPlayerDigging (0x07, PLAY/SERVERBOUND, sem colisão com RespawnPacket clientbound); SessaoDeJogo.iniciarQuebraDeBloco/cancelarQuebraDeBloco/finalizarQuebraDeBloco (status 0/1/2); 3 Casos de Uso; mineração automática (AutoMiner/DiggingHelper do legado) deliberadamente não portada | ✔ |
+| 2026-07-21 | Milestone 10 (incremento 10.4, encerramento): Player Block Placement — PlayerBlockPlacementPacket/Codec/Handler/EventoPlayerBlockPlacement (0x08, PLAY/SERVERBOUND, sem colisão com PlayerPositionAndLookPacket clientbound; Codec com extensão de sinal do campo y para o sentinela -1/-1/-1); SessaoDeJogo.colocarBloco; CasoDeUsoColocarBloco; lógica de inventário automático deliberadamente não portada; 548 testes automatizados, 0 falhas, 0 erros, 3 skipped deliberadamente | ✔ |
+| 2026-07-21 | Milestone 11 (incremento 11.1, encerramento): Movimentação e Rotação Combinadas — reaproveita ConfirmacaoDePosicaoPacket/Codec (0x06, PLAY/SERVERBOUND) já existente desde a Milestone 5, conforme decidido pela DEC-22 (nenhum Packet/Codec/Handler/Evento novo); SessaoDeJogo.moverEOlhar (mutação otimista de x/y/z/yaw/pitch); CasoDeUsoMoverEOlharJogador (conforme DEC-21); nenhuma DEC nova, nenhum Port novo; 552 testes automatizados, 0 falhas, 0 erros, 3 skipped deliberadamente | ✔ |
+| 2026-07-21 | Milestone 12 (incremento 12.1, encerramento): Arquitetura de Execução de Comandos do Bot (DEC-23) — novo subpacote interfaces.comando (camada aprovada desde a DEC-12, populada pela primeira vez); Comando/ResultadoComando/GerenciadorDeComandos, contrato mínimo single-shot sem Tick/Toggle/isMacro; 8 comandos concretos (ComandoMover/ComandoOlhar/ComandoMoverEOlhar/ComandoBalancarBraco/ComandoIniciarQuebraDeBloco/ComandoCancelarQuebraDeBloco/ComandoFinalizarQuebraDeBloco/ComandoColocarBloco) delegando a Casos de Uso já aprovados das Milestones 9-10; CommandHelp/CommandPlayerList/CommandMove/CommandGoto/CommandSneak e comandos de automação/inventário/combate do legado avaliados e deliberadamente não portados (motivo documentado por comando na DEC-23); nenhum Packet/Codec/Port/agregado novo; 583 testes automatizados, 0 falhas, 0 erros, 3 skipped deliberadamente | ✔ |
+| 2026-07-21 | Milestone 13 (incremento 13.1, encerramento): Raycast Fiel ao Legado sobre Mundo (DEC-24) — Bloco.solido() porta Blocks.IsSolid; Mundo.tracarRaio(...) porta World.RayCast por completo (quirk do bloco de destino nunca testado, semântica de permitirAgua preservada); novo record ResultadoDoRaio; SessaoDeJogo.tracarRaioParaBlocos(alcance) porta RayCastBlocks/GetLookVector/CalculateLookVector; correção de bounds-check em Mundo.blocoEm fiel a World.GetBlock (evita ArrayIndexOutOfBoundsException para y fora de [0,256)); CanSeeEntity genérico (altura por tipo de mob) deliberadamente não portado; nenhum Packet/Port/Use Case novo; 597 testes automatizados, 0 falhas, 0 erros, 3 skipped deliberadamente | ✔ |
+| 2026-07-21 | Milestone 14 (incremento 14.1, encerramento): Ações de Bloco com Auto-Mira (DEC-25) — SessaoDeJogo.olharParaBloco(x,y,z) porta Entity.LookTo/LookToBlock (sem o jitter aleatório do legado); SessaoDeJogo.usarItemNaMao(item) porta o sentinela -1/-1/-1/direction -1 de PacketBlockPlace(ItemStack); CasoDeUsoOlharParaBloco/CasoDeUsoUsarItemNaMao novos; ComandoClicarBloco (porta CommandClickBlock), ComandoQuebrarBloco (porta o caminho base de CommandBreakBlock, opções rp/rt; ncp/at fora de escopo), ComandoColocarBlocoAutoMira (porta CommandPlaceBlock; branch de item especial de PlaceCurrentBlock não portado por ser inalcançável a partir deste comando; alias próprio para não colidir com ComandoColocarBloco/Milestone 12); nenhum Packet/Port/agregado novo, consome o raycast da DEC-24; 623 testes automatizados, 0 falhas, 0 erros, 3 skipped deliberadamente | ✔ |
+| 2026-07-21 | Milestone 15 (incremento 15.1, encerramento): Infraestrutura de Saída de Mensagens para o Operador (DEC-26) — domain.bot.SaidaDoOperador porta MinecraftClient.ChatMessages/MaximumChatLines/PrintToChat (regime permanente de 151 mensagens preservado); Bot ganha o campo saidaDoOperador (sem mudança de construtor); GerenciadorDeComandos.executar ganha as mensagens de fallback de CommandManagerNew.RunCommand (mesma assinatura pública); ComandoAjuda (porta CommandHelp) e ComandoListarJogadores (porta CommandPlayerList) novos, fecham a lacuna aberta desde a DEC-23; nenhum Packet/Port/agregado/bounded context novo, nenhuma interface pública alterada; 640 testes automatizados, 0 falhas, 0 erros, 3 skipped deliberadamente | ✔ |
+| 2026-07-21 | Milestone 16 (incremento 16.1, encerramento): Algoritmo de Busca de Caminho sobre Mundo (DEC-27) — domain.bot.PontoDeCaminho (porta PathPoint) e domain.bot.BuscadorDeCaminho (package-private, porta PathFinder+Path); Mundo.criarCaminhoPara (porta World.CreatePathTo por completo) e SessaoDeJogo.criarCaminhoPara (conveniência com os 4 valores fixos do único call site do legado) novos; PathGuide e seus consumidores (CommandGoto/CommandFollow/CommandPortal/AutoMiner) permanecem fora de escopo sem reabrir a DEC-22 (motor de física); dois achados de código morto comprovados e não portados (canDrown nunca true em nenhuma chamada do legado; NodeType._2 inalcançável); nenhum Packet/Port/Caso de Uso/Comando/bounded context novo; 652 testes automatizados, 0 falhas, 0 erros, 3 skipped deliberadamente | ✔ |
+| 2026-07-21 | Milestone 17 (incremento 17.1, encerramento): Registro de Blocos e Calculadora de Força de Quebra (DEC-28) — domain.protocol.v1_8.RegistroDeBlocos (package-private, porta Blocks/Block do legado, só dureza/material/ferramentasDeColeta, 236 blocos extraídos do blocks.json embutido no .resx) e CalculadoraDeQuebraDeBloco (público, porta DiggingHelper por completo, tabela de ferramentas do materials.json embutida, 43 entradas) novos; SessaoDeJogo.estaSubmerso() novo (porta Entity.IsUnderWater, derivável hoje sem lacuna); nível de Efficiency/amplifier de Haste/amplifier de Mining Fatigue/OnGround viram parâmetros explícitos (sentinela 0/-1) por falta de estado equivalente no domínio Java (NBT de item e efeitos do próprio bot continuam não modelados, lacunas já aceitas em milestones anteriores; motor de física fora de escopo desde a DEC-22); AutoMiner/CommandMiner/CommandBreakBlock (Tick loop) permanecem fora de escopo; nenhum Packet/Port/Caso de Uso/Comando/bounded context novo; 683 testes automatizados, 0 falhas, 0 erros, 3 skipped deliberadamente | ✔ |
+| 2026-07-21 | Milestone 18 (incremento 18.1, encerramento): Update Sign e Encerramento Formal da Milestone 7 — domain.protocol.v1_8.UpdateSignPacket/Codec/Handler/EventoUpdateSign/ReceptorUpdateSign novos (PLAY, id 0x33, CLIENTBOUND, porta Handler_v18.cs case 51 por completo); Mundo.registrarPlaca/placaEm novos (dicionário interno independente do mapa de chunks, sem no-op para chunk não carregado, fiel ao World.Signs do legado; expurgação por distância e gate Client.MapAndPhysics do legado não portados, mesma categoria de otimização específica do C# já registrada na DEC-27); busca exaustiva em Handler_v18.cs (35 case enumerados) e em classes Packet* de todo o Projeto Adv 2.4.5 confirma ausência total de precedente para World Border (0x44), Update Block Entity (0x35), Block Action (0x24) e Block Break Animation (0x25) — cobertos pelo descarte seguro da DEC-20, mesmo tratamento de Time Update/Spawn Position; bounded context de Mundo (Milestone 7) encerrado oficialmente; nenhuma DEC nova; 693 testes automatizados, 0 falhas, 0 erros, 3 skipped deliberadamente | ✔ |
+| 2026-07-21 | Milestone 19 (incremento 19.1, encerramento): Linha de Visão contra Jogador Remoto — SessaoDeJogo.podeVerJogador(EntidadeJogadorRemoto) novo, porta Entity.CanSeePlayer (raio dos pés do bot até o olho do alvo, y+1.62, mesma constante já aceita na Milestone 13), segundo consumidor de Mundo.tracarRaio/DEC-24; CanSeeEntity genérico para mobs permanece fora de escopo (depende de EntityProperty.Height por tipo de mob, dado ainda não levantado); nenhum Packet/Port/Caso de Uso/Comando/agregado/bounded context novo; nenhuma DEC nova; 695 testes automatizados, 0 falhas, 0 erros, 3 skipped deliberadamente | ✔ |
+| 2026-07-21 | Milestone 20 (incremento 20.1, encerramento): Entity Action — Sneak — domain.protocol.v1_8.EntityActionPacket/Codec/Handler/EventoEntityAction novos (PLAY, id 0x0B, SERVERBOUND, sem colisão com AnimationPacket clientbound, sem Receptor); SessaoDeJogo.agachar()/pararDeAgachar() novos (actionId 0/1, jumpBoost sempre 0); CasoDeUsoAgachar/CasoDeUsoPararDeAgachar (conforme DEC-21) e ComandoAgachar/ComandoPararDeAgachar novos — toggle único do legado (CommandSneak) modelado como 2 comandos single-shot simétricos, já que Comando não tem Toggle() desde a DEC-23, mesmo padrão da separação de PlayerDigging na Milestone 10; rastreamento completo de todo call site de PacketEntityAction no legado confirma ActionID 2 (leave bed) e 5 (jump boost) como código morto e ActionID 3/4 (sprint) como Tick-loop-only (MinecraftClient.cs, mesmo motivo da DEC-22); Player bare (0x03, PacketUpdate) investigado como candidato irmão e confirmado Tick-loop-only pelo mesmo motivo; nenhum Packet/Port/agregado/bounded context novo; nenhuma DEC nova; 710 testes automatizados, 0 falhas, 0 erros, 3 skipped deliberadamente | ✔ |
+| 2026-07-21 | Milestone 21 (incremento 21.1, encerramento): Fundação da Engine de Execução Contínua (DEC-29) — pivô de escopo (infraestrutura de execução, não capacidade isolada de protocolo); domain.bot.EstadoExecucao (PARADO/EXECUTANDO/PAUSADO, sem precedente no legado) novo; Bot ganha iniciar()/pausar()/retomar()/parar() e registrarTarefa/removerTarefa/tarefasContinuas; domain.bot.TarefaContinua (interface funcional, zero implementações reais) novo; application.port.AgendadorDeTarefasPort (segundo Port do projeto) novo; infrastructure.execucao.AgendadorDeTarefasVirtualThread (Virtual Threads, DEC-03) e MotorDeTick (percorre bots EXECUTANDO, isola falha por tarefa, protegido contra reentrância) novos; DEC-29 resolve explicitamente que o mecanismo não reabre DEC-22/DEC-23/DEC-27 (zero leitura/escrita de física, zero tarefa real registrada — mesma distinção mecanismo/conteúdo da própria DEC-27); nenhum Packet/Comando/bounded context novo, nenhuma interface existente alterada; 726 testes automatizados, 0 falhas, 0 erros, 3 skipped deliberadamente | ✔ |
 
 ---
 
