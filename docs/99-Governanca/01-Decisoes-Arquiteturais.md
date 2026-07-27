@@ -1619,3 +1619,422 @@ Decisões adicionais aditivas, sem stop-trigger (mesma categoria de decisão já
 **Data:** 2026-07-23
 
 **Responsável:** Mateus Botega (formalizada sob instrução explícita de mudança de estratégia da Fase 2 — construir infraestrutura reutilizável antes de macros — e de implementação do épico raiz (EPIC-I1) em sessão única; decisões aditivas sem stop-trigger, decidir-documentar-continuar conforme padrão já estabelecido pelas DECs anteriores.)
+
+---
+
+### DEC-38 — Reabertura Parcial da DEC-23: Ataque a Entidade Específica como Etapa de Macro deixa de ser "Automação/Combate" (Épico 4, pré-requisito de Solk/CommandMob e UseBow)
+
+**Contexto:** A Milestone 35 registrou o Épico 4 do backlog global (`project_backlog_definitivo`) como bloqueado por uma "decisão de política de combate" pendente para `Solk` (`CommandMob`/`CommandMobPlus`/`CommandMobTeleport`/`CommandPesca`) e `CommandUseBow` — nenhum dos dois atende ao critério "zero DEC/decisão" da Milestone 35. A DEC-23 (Milestone 12) excluiu `CommandKillAura`/`CommandMiner`/`CommandHerbalism`/`CommandAntiAFK`/`Solk.*` em um único item, sob o rótulo "automação/combate — excluídos por política do projeto desde a Milestone 5", sem distinguir dois fenômenos que essa lista mistura: (a) combate como *mecanismo genérico* (buscar e atacar qualquer entidade hostil ao alcance, indiscriminadamente, como `CommandKillAura`) e (b) combate como *efeito colateral de uma automação de negócio* que ataca uma entidade já identificada e específica, como um passo entre vários de uma máquina de estados (ex.: `CommandMob.hitarMob()`, que ataca o `EntityMob` já resolvido por `buscarMobProximo()`, dentro de uma automação maior de farm/venda/troca de ferramenta). O responsável do projeto instruiu revisar exclusivamente essa distinção nesta sessão.
+
+**Legado consultado:** `Solk/CommandMob.cs` (`hitarMob()`, linha 479-520: ataca `mob.EntityID` — já resolvido, um único alvo, nunca busca outra entidade durante o ataque — via `PacketUseEntity(mob.EntityID, true)` em loop, precedido de `LookToBlock`/`SwingArm`; `buscarMobProximo()`, linha 852-860: primeiro `EntityMob` da coleção dentro de 3.5 blocos, sem checagem de linha de visão — o `CanSeeEntity` está comentado/desativado no próprio legado); `Commands/CommandKillAura.cs` (não lido em detalhe nesta sessão — já auditado e excluído desde a DEC-23; usado aqui só por contraste conceitual: toggle contínuo, varre todas as entidades hostis próximas, ataca qualquer uma ao alcance, sem alvo pré-determinado por um fluxo de negócio). Ambos chamam o mesmo `PacketUseEntity`/wire format — a diferença nunca esteve no pacote, sempre esteve em *quem decide o alvo e por quê*.
+
+**Problema:** Sem esta distinção, qualquer macro legítima do legado que inclua ataque como uma entre várias etapas (farm de mob, futuramente outras) fica presa sob o mesmo rótulo de política que bloqueia `CommandKillAura` — apesar de já existir, desde a Milestone 34 (`UseEntityPacket`/`SessaoDeJogo.interagirComEntidade`/`ComandoUseEntity`), precedente arquitetural direto de que atacar uma entidade específica e já identificada, sob demanda, não é por si só "mecanismo de combate": é tratado exatamente como qualquer outra interação do bot com o mundo (mesma categoria de `iniciarQuebraDeBloco`/`colocarBloco`/`usarItemNaMao`), auditado e fechado sem nenhuma DEC nova.
+
+**Critério de Distinção Proposto:**
+
+1. **Categoria 1 — Automação de combate genérica (permanece fora de escopo, sem prazo, sem exceção):** qualquer mecanismo que (a) decide *sozinho e continuamente* quais entidades atacar, sem uma etapa de negócio externa que já tenha identificado o alvo; (b) ataca indiscriminadamente qualquer entidade hostil/jogador ao alcance; (c) ignora linha de visão/obstáculos (ataque "através de parede"); ou (d) existe com o propósito único de dar vantagem de combate ao bot (KillAura, Aura, PvP automático, Reach/Hitbox estendido). `CommandKillAura` e qualquer construção equivalente permanecem excluídos — nenhuma parte desta DEC os desbloqueia.
+2. **Categoria 2 — Ataque como etapa de uma automação de negócio já aprovada (passa a candidato, caso a caso):** uma macro cujo *propósito* não é combate (farm/coleta/venda/navegação) e que, como uma entre várias etapas de sua máquina de estados, ataca uma entidade já resolvida por uma etapa anterior (busca/seleção), usando as mesmas primitivas de qualquer outra interação com o mundo (`interagirComEntidade`/`UseEntityPacket`, `Mundo.tracarRaio`, `GuiaDeCaminho`, `MotorDeTick`/`TarefaContinua`). O ataque em si não ganha nenhuma capacidade nova (sem reach, sem visão através de parede, sem seleção automática indiscriminada) além do que `ComandoUseEntity`/`CasoDeUsoInteragirComEntidade` já fazem hoje.
+
+**Decisão Tomada:** Aceita o critério acima. A DEC-23 não é redefinida (nenhum texto seu muda) — é parcialmente reaberta, mesmo padrão já usado pela DEC-32/DEC-35 sobre a DEC-22: o item "`CommandKillAura`/.../`Solk.*` — automação/combate, excluídos por política" deixa de ser um bloqueio único e indiferenciado; passa a valer a Categoria 1 (KillAura, permanece excluído) separada da Categoria 2 (Solk/`CommandMob`/`CommandMobTeleport`/`CommandPesca`, `CommandUseBow` quando limitado a mirar/disparar contra um alvo já identificado — candidatos, sujeitos a aprovação individual do responsável do projeto antes de cada implementação, exatamente como qualquer outra macro da Fase 2). Esta DEC **não implementa nenhuma macro** (`CommandMob`/Solk continuam exigindo aprovação própria, "caso aprovado", antes de qualquer linha de código de macro) — só formaliza a distinção e fecha a única lacuna de infraestrutura genérica identificada: `EntidadesDoMundo` não tinha nenhuma forma de localizar uma `EntidadeMob` por proximidade (só `porId`/`porUuid` existiam; a busca "mais próximo" só existia, de forma privada e específica a jogador, dentro de `ComandoUseEntity`).
+
+**Infraestrutura Adicionada (genérica, sem regra de macro):** `EntidadesDoMundo.mobMaisProximo(x, y, z, raio): EntidadeMob` — primitiva de consulta pura (mesma categoria de `Mundo.tracarRaio`/DEC-24: sem Packet, sem Port, sem Use Case novo), retorna o `EntidadeMob` mais próximo dentro do raio informado ou `null`. Fiel ao *dado* que `buscarMobProximo()` consulta (tipo `EntityMob`, distância, raio configurável pelo chamador em vez do `3.5` fixo do legado, já que este é o primeiro consumidor genérico e não há ainda um segundo caso concreto para travar um valor fixo — mesma disciplina da DEC-18/"regra de três"), mas usa "mais próximo" em vez de "primeiro encontrado" (a ordem de iteração do legado vem de iteração de dicionário do C#, não é uma regra de negócio deliberada — mesmo raciocínio já usado por `jogadorVisivelMaisProximo` em `ComandoUseEntity`, que também escolhe o mais próximo, não o primeiro). Nenhuma checagem de linha de visão é feita aqui (fiel ao `CanSeeEntity` desativado no legado) — se uma futura macro precisar disso, compõe com `Mundo.tracarRaio` já existente (DEC-24), sem exigir mudança nesta primitiva.
+
+**Justificativa:** Preserva integralmente a Categoria 1 (nenhuma forma de KillAura/automação indiscriminada é desbloqueada por esta DEC) enquanto reconhece um precedente arquitetural já em produção desde a Milestone 34: atacar uma entidade específica, via `UseEntityPacket`, não é tratado como "mecanismo de combate" quando a interação é pontual e o alvo já foi resolvido por outra camada — é tratado como qualquer outra ação do bot sobre o mundo. Formaliza esse precedente para a categoria mais ampla "etapa de máquina de estados" (não só comando manual único), desbloqueando a Categoria 2 como candidata sem comprometer previamente nenhuma macro específica — `CommandMob`/Solk continuam exigindo o próprio processo de aprovação, macro por macro, antes de qualquer implementação.
+
+**Consequências:**
+
+*Positivas:*
+- Desbloqueia formalmente `Solk`/`CommandMob`/`CommandMobTeleport`/`CommandPesca` e `CommandUseBow` como candidatos avaliáveis (Épico 4 deixa de estar bloqueado por ausência de decisão de política — passa a depender só da aprovação individual de cada macro, já prevista pelo próprio responsável).
+- Nenhuma capacidade de combate genérica nova é introduzida — `mobMaisProximo` é dado puro (mesma classe de `Mundo.tracarRaio`), sem decidir quando/se atacar.
+- Mantém `CommandKillAura` e equivalentes permanentemente fora de escopo, sem ambiguidade — a Categoria 1 é explícita e não fica sujeita a reinterpretação futura por analogia com a Categoria 2.
+
+*Negativas:*
+- A distinção depende de julgamento caso a caso ("o ataque é etapa de uma automação de negócio maior, ou é o próprio propósito da automação?") — não é um teste mecânico; cada macro futura da Categoria 2 precisa ser avaliada individualmente contra o critério, não apenas assumida como aprovada por estar nesta lista.
+- `EntidadesDoMundo.mobMaisProximo` ainda não tem nenhum chamador de produção (mesma situação inicial de `Mundo.tracarRaio` após a DEC-24) — fica disponível para quando `CommandMob`/Solk ou outra macro de mob for de fato aprovada e construída.
+
+**Impacto por Camada:**
+- **Domain:** `EntidadesDoMundo` ganha `mobMaisProximo(double x, double y, double z, double raio): EntidadeMob` (aditivo, nenhuma assinatura existente alterada).
+- **Application/Infrastructure/Interfaces:** nenhum impacto — nenhum Packet, Port, Use Case, Comando ou macro novo nesta DEC.
+
+**Relação com Decisões Anteriores:** Reabre parcialmente a **DEC-23** (mesmo padrão da **DEC-32**/**DEC-35** sobre a DEC-22) — não altera nenhum texto ou decisão já tomada por ela, só qualifica o item "automação/combate" em duas categorias. Reaproveita integralmente o precedente da **Milestone 34** (`UseEntityPacket`/`SessaoDeJogo.interagirComEntidade`/`ComandoUseEntity`, fechada com "zero DEC nova") como fundamento de que ataque pontual a alvo específico já é tratado como interação, não combate. Segue a mesma disciplina de primitiva-antes-de-macro da **DEC-24** (raycast) e da "regra de três" da **DEC-18** (raio como parâmetro do chamador, não constante travada com um único caso). Não desbloqueia nem se relaciona com **DEC-22/27/35** (motor de física/pathfinding) — `CommandMob` seguirá usando comandos de teleporte do próprio servidor (`/home`), fiel ao legado, não navegação por `GuiaDeCaminho`, a menos que uma futura macro específica exija o contrário.
+
+**Impacto na Implementação Java:** `domain.bot.EntidadesDoMundo` ganha `mobMaisProximo(double x, double y, double z, double raio): EntidadeMob`. Nenhuma interface pré-existente alterada.
+
+**Data:** 2026-07-25
+
+**Responsável:** Mateus Botega (instrução explícita nesta sessão para revisar exclusivamente a distinção Categoria 1/Categoria 2 dentro da DEC-23; reabertura parcial de DEC já aprovada, mesmo padrão pré-autorizado pela DEC-32/DEC-35 — decidir-documentar-continuar. `Solk`/`CommandMob` e `CommandUseBow` permanecem não implementados, aguardando aprovação individual — "caso aprovado" — antes de qualquer código de macro.)
+
+---
+
+### DEC-39 — Fechamento dos Domínios Chat/NBT/Efeitos do Próprio Bot como Foundation APIs (Milestone 39)
+
+**Contexto:** A Milestone 38 (pivô "unidade de trabalho = Capacidade Fundamental") identificou 4 domínios parcialmente fechados, cada um dependente de "decisão arquitetural própria": Chat (parser de `ChatComponent`/JSON, lacuna desde a Milestone 5 Incremento 3), NBT de item (lacuna desde a Milestone 17/DEC-28), Efeitos do próprio bot (lacuna desde a Milestone 6.4/DEC-28) e Movimento/MoveQueue (DEC-36, explicitamente fora de escopo desta sessão por instrução do responsável). Instrução explícita nesta sessão: fechar os 3 primeiros como Foundation APIs, sem nenhuma macro/wiring/comportamento de negócio.
+
+**Legado consultado:** Especificação NBT (Named Binary Tag, 11 tipos de tag) já parcialmente portada como lógica de *descarte* em `ItemStackCodec.pularPayload` desde a Milestone 10 — mesma fonte, agora convertida em construção de árvore real. `Handler_v18`/`Handler_v152` (Entity Effect/Remove Entity Effect, cases já portados desde a Milestone 6.4) — o C# só aplica efeito quando `entityId == Client.PlayerID`, gravando em `Player.ActivePotions`; a divergência Java (efeito aplicado a qualquer entidade rastreada) já estava documentada desde então, com o próprio bot como único caso não coberto. Especificação do protocolo 1.8 para Chat Message (`https://wiki.vg/Chat`, `ChatComponent` JSON com `text`/`extra`/`translate`/`with`) — o C# nunca implementou esse parser (`ChatParser.cs` mencionado como gap desde a Milestone 5).
+
+**Decisões Tomadas:**
+
+1. **NBT (`domain.protocol.v1_8.TagNBT`, novo — sealed interface com 11 records aninhados, um por tipo de tag) + `NbtCodec` (novo, leitor/escritor genérico, extraído 1:1 do switch de descarte já existente em `ItemStackCodec`).** `ItemStack` ganha um 4º componente (`TagNBT.TagCompound nbt`), **aditivo**: o record ganha um construtor secundário de 3 argumentos (`this(itemId, count, damage, null)`) que preserva **100% dos call sites existentes** (`new ItemStack(id, count, damage)` continua compilando e se comportando exatamente igual, `nbt=null`) — nenhum "contrato público quebrado" real, mesmo espírito aditivo da DEC-14/DEC-15/DEC-17/DEC-18. `ItemStackCodec.decode`/`encode` passam a chamar `NbtCodec.lerRaiz`/`escreverRaiz` em vez de só descartar bytes.
+2. **Efeitos do próprio bot: `SessaoDeJogo` ganha `aplicarEfeito`/`removerEfeito`/`efeito`/`efeitosAtivos`, reaproveitando o mesmo tipo de valor `EntidadeRemota.EfeitoAtivo` já usado para espelhar efeitos de outras entidades (sem duplicar o record).** `ReceptorEntityEffect`/`ReceptorRemoveEntityEffect` passam a checar `evento.entityId() == sessaoDeJogo.entityId()` primeiro (roteando para `SessaoDeJogo`) antes de consultar `EntidadesDoMundo` (que nunca contém o próprio bot, mesmo racional já registrado para velocidade no Incremento 6.3) — fecha o gap "efeito do próprio bot não tinha onde pousar", sem alterar o roteamento já existente para entidades remotas.
+3. **Chat: `domain.protocol.v1_8.ParserDeChatComponent` (novo) extrai texto plano de um `ChatComponent` JSON (`text`+`extra` recursivo).** Parser JSON próprio, minimalista (recursivo-descendente, RFC 8259) em vez de uma biblioteca externa — `jackson-databind` não é dependência real deste projeto (`spring-boot-starter` puro não a traz; só existe no `.m2` local por causa de outros projetos na mesma máquina), e introduzi-la só para isto violaria a diretriz do CLAUDE.md de não trazer tecnologia nova sem necessidade comprovada. `translate`/`with` (mensagens de sistema traduzidas) não resolvem a chave de tradução para texto final (exigiria o arquivo `en_us.lang` inteiro, fora de escopo) — o resultado é a concatenação dos argumentos `with`, sem o texto fixo; suficiente para pattern-matching (o dado variável, ex. nome do jogador, continua presente). `SessaoDeJogo` ganha `textoPlanoDaUltimaMensagemDeChat()`, wrapper fino sobre o parser.
+
+**Justificativa:** Os 3 domínios eram, na prática, extensões aditivas puras (nenhum contrato público quebrado de forma real — o único "risco" formal, o novo componente de `ItemStack`, é neutralizado pelo construtor secundário compatível) sobre capacidades já existentes (`EntidadeRemota.EfeitoAtivo`, `ItemStackCodec`, `SessaoDeJogo.ultimaMensagemDeChat`) — nenhum dos gatilhos de parada desta sessão se aplica (sem DEC ambígua, sem conflito com DEC existente, sem contrato quebrado, sem arquitetura consolidada alterada, sem comportamento ambíguo no legado exigindo julgamento de negócio, sem outro projeto necessário). Mesmo padrão "decidir-documentar-continuar" já usado por toda extensão aditiva anterior (DEC-14/15/17/18).
+
+**Consequências:**
+
+*Positivas:*
+- Fecha formalmente os 3 domínios "parcialmente fechados" identificados pela Milestone 38 — resta só Movimento/MoveQueue (DEC-36, deliberadamente fora de escopo).
+- NBT desbloqueia, sem código novo adicional, qualquer futura leitura de encantamento/nome customizado/lore por composição sobre `TagNBT.TagCompound.get(...)` — nenhuma regra de negócio (ex. "tem Flame?") foi modelada, só a árvore de dados.
+- Efeitos do próprio bot desbloqueiam, sem código novo adicional, qualquer futura macro que precise saber se o bot está com Velocidade/Força/Regeneração ativa (ex. o `amplifierCeleridade`/`amplifierFadiga` sentinela `-1` da DEC-28 tem, agora, onde ser resolvido de verdade — não resolvido nesta DEC, que não mexe em `CalculadoraDeQuebraDeBloco`).
+- Chat desbloqueia, sem código novo adicional, qualquer futura macro reativa a texto de servidor (item 7 documentado como omissão em `TarefaMob`/DEC-38).
+
+*Negativas:*
+- `TagNBT`/`NbtCodec` ainda não têm nenhum consumidor de leitura de negócio (só a serialização bruta) — mesma situação inicial de `Mundo.tracarRaio` após a DEC-24, aceita pela mesma disciplina.
+- `ParserDeChatComponent` não resolve `translate` para texto real — uma macro que dependa do texto fixo de uma mensagem de sistema (não dos argumentos) permanece bloqueada; nenhum consumidor real exige isso hoje.
+- `SessaoDeJogo.efeitosAtivos()` ainda não tem nenhum chamador de produção — mesma disciplina "capacidade sem consumidor real ainda" já usada repetidamente neste projeto.
+
+**Impacto por Camada:**
+- **Domain:** `SessaoDeJogo` ganha `aplicarEfeito`/`removerEfeito`/`efeito`/`efeitosAtivos`/`textoPlanoDaUltimaMensagemDeChat` (aditivo).
+- **Domain (protocolo v1.8):** `TagNBT` (novo), `NbtCodec` (novo, package-private), `ParserDeChatComponent` (novo). `ItemStack` ganha `nbt` (aditivo, construtor de 3 args preservado). `ItemStackCodec` decodifica/codifica NBT de verdade em vez de descartar. `ReceptorEntityEffect`/`ReceptorRemoveEntityEffect` roteiam para `SessaoDeJogo` quando `entityId` é o do próprio bot.
+- **Application/Infrastructure/Interfaces:** nenhum impacto — nenhum Packet, Port, Use Case, Comando ou macro novo.
+
+**Relação com Decisões Anteriores:** Fecha a lacuna registrada pela **DEC-28** ("NBT de item... decisão arquitetural própria, não resolvida" e "amplifierCeleridade/amplifierFadiga... decisão arquitetural própria, não resolvida"). Fecha a lacuna registrada desde a **Milestone 5 Incremento 3** (parser de `ChatComponent`). Mesmo padrão de extensão aditiva de record já usado pela **DEC-14/DEC-15** (campos novos com contrato antigo preservado). Não reabre nem contradiz a **DEC-36** (MoveQueue/Movement por yaw permanece fora de escopo, não tocado nesta DEC). Reaproveita `EntidadeRemota.EfeitoAtivo` (Milestone 5/6) sem duplicar o tipo.
+
+**Impacto na Implementação Java:** `domain.protocol.v1_8.TagNBT` (novo), `domain.protocol.v1_8.NbtCodec` (novo), `domain.protocol.v1_8.ParserDeChatComponent` (novo). `ItemStack` ganha componente `nbt` (aditivo). `ItemStackCodec`/`ReceptorEntityEffect`/`ReceptorRemoveEntityEffect` atualizados. `SessaoDeJogo` ganha `aplicarEfeito`/`removerEfeito`/`efeito`/`efeitosAtivos`/`textoPlanoDaUltimaMensagemDeChat`. Nenhuma assinatura pública pré-existente removida ou alterada.
+
+**Data:** 2026-07-25
+
+**Responsável:** Mateus Botega (instrução explícita nesta sessão para fechar Chat/NBT/Efeitos do próprio bot como Foundation APIs, ignorando MoveQueue por já resolvido pela DEC-36; extensões 100% aditivas, sem stop-trigger acionado — decidir-documentar-continuar conforme padrão já calibrado para este projeto.)
+
+---
+
+### DEC-40 — EPIC-APP1: Primeira API Pública (REST + WebSocket) da Plataforma (Milestone 40)
+
+**Contexto:** Mudança de fase do projeto, por instrução explícita do responsável: o motor (protocolo, domínio, scheduler, reconnect, proxy, tick engine, commands, macros principais) está considerado praticamente concluído; o objetivo deixa de ser "portar funcionalidades" e passa a ser "executar bots reais através da aplicação Java". Não existia nenhuma forma de operar a plataforma além de testes JUnit e (futuramente) um console interno nunca conectado a nenhum bean Spring. Esta milestone constrói `interfaces.rest`/`interfaces.websocket`, a primeira camada web do projeto, exclusivamente sobre os Casos de Uso e a camada `interfaces.comando` já existentes — nenhuma regra de negócio nova.
+
+**Legado consultado:** Nenhum. Instrução explícita do responsável para esta etapa: "o legado deixa de ser referência nesta etapa" — desvio deliberado e autorizado da regra padrão do `CLAUDE.md` ("Considere EXCLUSIVAMENTE como código legado válido... `Projeto Adv 2.4.5`"), justificado porque esta milestone é orquestração de API sobre a arquitetura Java já construída, não porte de regra de negócio (o legado C# nunca teve uma API REST/WebSocket — não há "comportamento a preservar" aqui).
+
+**Decisões Tomadas:**
+
+1. **`application.registry.GerenciadorDeBots` (novo) — registry `ConcurrentHashMap<IdentificadorBot, Bot>`.** Nenhuma peça do projeto guardava o `Bot` criado para consulta posterior por id (`MotorDeTick`/`GerenciadorDeReconexao` só mantêm `Set<Bot>` internos, sem lookup). `CasoDeUsoCriarBot` passa a receber `GerenciadorDeBots` (além de `MotorDeExecucaoPort`, que já recebia) e registrar nele — mudança de assinatura de um caso de uso existente, mitigada por ser puramente aditiva de responsabilidade (mesmo padrão de "registrar em mais de um lugar" que o próprio caso de uso já tinha desde a DEC-33). Novo `CasoDeUsoRemoverBot` (desconecta se necessário, remove do `MotorDeExecucaoPort` e do `GerenciadorDeBots`).
+2. **4 Casos de Uso finos de transição de estado** (`CasoDeUsoIniciarBot`/`CasoDeUsoPararBot`/`CasoDeUsoPausarBot`/`CasoDeUsoRetomarBot`) — cada um só chama o método já existente em `Bot` (`iniciar()`/`parar()`/`pausar()`/`retomar()`). Sem estes, o controller precisaria chamar o domínio diretamente, violando a regra "controller sem lógica de negócio" adotada nesta milestone.
+3. **Comandos e macros expostos sem nenhuma lógica nova, via a infraestrutura `interfaces.comando` já existente desde a DEC-23**, que nunca tinha sido conectada a nenhum bean Spring (`GerenciadorDeComandos` nunca fora instanciado em produção). Novo `infrastructure.config.ConfiguracaoDeComandos` (wiring puro: instancia os ~38 `Comando*` existentes e os registra). API expõe `POST /bots/{id}/commands` (linha livre) e `GET|POST|DELETE /bots/{id}/macros/{alias}` — o `POST`/`DELETE` de macro só monta a linha de comando (`alias + argumentos`) e delega a `GerenciadorDeComandos.executar`, mesmo texto que o `ComandoFollow`/`ComandoAntiAFK`/`ComandoHerbalismo`/`ComandoMinerar`/`ComandoMob`/`ComandoAutoFish`/`ComandoLargarTudo`/`ComandoTwerk` já processam desde as Milestones 23-37.
+4. **Persistência de Conta/Servidor/Proxy: repositórios in-memory atrás de portas novas (`RepositorioDeContas`/`RepositorioDeServidores`), mesmo padrão hexagonal de `ConexaoBotPort`/`MotorDeExecucaoPort`.** `domain.bot.Conta` (novo, id + `CredenciaisBot`) e `domain.bot.PerfilDeServidor` (novo, id + nome + host/port) dão identidade a conceitos que só existiam como records passados no momento de criar um bot. `PoolDeProxies` ganha `adicionar`/`remover`/`listar` (antes só `proximo()`, lista fixa imutável no construtor) para o pool global (bean singleton, `ConfiguracaoDeExecucao`, vazio por padrão desde a Milestone 22) virar gerenciável via API. **PostgreSQL é a stack de dados oficial do projeto (`CLAUDE.md`) mas fica deliberadamente fora de escopo desta milestone** — os adapters in-memory (`RepositorioDeContasEmMemoria`/`RepositorioDeServidoresEmMemoria`) isolam a troca futura por JPA atrás da porta, sem tocar caso de uso ou controller.
+5. **Event bus mínimo para tempo real: `application.registry.NotificadorDeEventos` (novo, pub/sub por bot + global).** Nem `infrastructure.protocol.RoteadorDeEventos` (1:1 por tipo de pacote, interno ao protocolo) nem `SaidaDoOperador` (buffer pull, Milestone 15/DEC-26) servem para push a múltiplos consumidores WebSocket. Dois pontos de extensão aditivos, sem mudar comportamento para quem não usa a API: `SaidaDoOperador` ganha um `Consumer<String>` opcional invocado dentro de `imprimir` (setado por `GerenciadorDeBots.registrar`); `Bot` ganha um `Consumer<EstadoExecucao>` opcional invocado ao final de `iniciar()`/`pausar()`/`retomar()`/`parar()`/`registrarDesconexao()`. Nenhum caso de uso de ação/protocolo precisou conhecer `NotificadorDeEventos` — só `GerenciadorDeBots` liga os dois ouvintes ao registrar um bot.
+6. **WebSocket cru (sem STOMP), dois endpoints: `/ws/bots/{id}/events` (por bot) e `/ws/events` (global).** Decisão de não introduzir um message broker (STOMP/RabbitMQ/etc.) para dois tópicos simples — `interfaces.websocket.BotEventsWebSocketHandler` (um `TextWebSocketHandler`, roteando pelo path da URI) mais `NotificadorDeEventos` já resolvem o requisito sem dependência nova. Upgrade isolado nesta camada se o React precisar de mais tópicos/salas no futuro.
+7. **Autenticação: API key simples via header `X-API-Key` (`infrastructure.config.ApiKeyFilter`, `OncePerRequestFilter`), chave em `advancedbot.api.key` (`application.yml`).** Decisão deliberada de não introduzir Spring Security/OAuth/JWT: a API ainda não tem nenhum consumidor externo real (o React desta plataforma ainda não existe) e múltiplos usuários/papéis com permissões distintas não são requisito hoje — YAGNI, revisável quando essa necessidade for real. `/ws/**` (navegador não permite header customizado no handshake WS) e `/swagger-ui`/`/v3/api-docs` ficam fora do filtro.
+8. **`GET`/`POST`/`DELETE` retornam DTOs (`records` em `interfaces.rest.dto`, mesmo padrão dos value objects de domínio); erros passam por `GlobalExceptionHandler` (`@RestControllerAdvice`) mapeando `IllegalArgumentException`→400, `IllegalStateException`→409 (inclui as exceptions de transição de estado que `Bot.pausar()`/`retomar()` já lançavam desde a Milestone 21/DEC-29, agora com semântica HTTP em vez de só Java), `RecursoNaoEncontradoException` (novo, genérico)→404; listas de coleção suportam paginação simples offset/limit (`PaginacaoSupport`); tudo sob `/api/v1`.**
+
+**Justificativa:** Toda a camada nova é orquestração pura (DTO → objeto de domínio → Caso de Uso já aprovado → DTO de resposta) — nenhum Controller contém decisão de negócio. Os únicos ajustes na arquitetura pré-existente (assinatura de `CasoDeUsoCriarBot`, hooks opcionais em `SaidaDoOperador`/`Bot`, métodos novos em `PoolDeProxies`) são estritamente aditivos ou de fiação (wiring), exigidos para tornar Casos de Uso e a camada `interfaces.comando` já aprovados **utilizáveis** por um cliente externo — consistente com a autorização do responsável ("se durante a implementação você perceber pequenos ajustes necessários na arquitetura atual para expor corretamente os Casos de Uso, implemente-os no mesmo épico").
+
+**Consequências:**
+
+*Positivas:*
+- Primeira vez que a plataforma pode ser operada de ponta a ponta por um cliente HTTP real (verificado manualmente nesta sessão: criar servidor → criar bot → iniciar → ativar macro → evento chega via WebSocket em tempo real → consultar métricas/logs → pausar → 409 ao pausar de novo → remover → 404 após remover).
+- `GerenciadorDeComandos`/`interfaces.comando` (aprovados desde a DEC-23, nunca antes conectados a um bean Spring) tornam-se utilizáveis em produção sem nenhuma linha de lógica de comando nova.
+- Base pronta para um frontend React consumir (DTOs estáveis, versionamento `/api/v1`, eventos WebSocket tipados) sem acoplar o React a nenhum tipo de domínio Java diretamente.
+
+*Negativas:*
+- Repositórios de Conta/Servidor/Proxy em memória — perdem estado a cada restart do processo; aceito como fora de escopo desta milestone (PostgreSQL fica para uma milestone própria de persistência).
+- Autenticação por API key único, sem múltiplos usuários/papéis — suficiente para uso interno hoje, insuficiente se a plataforma precisar de operadores distintos com permissões diferentes no futuro.
+- `EventoDeBot`/`IdentificadorBot` serializados via Jackson por reflexão padrão (sem `@JsonValue` customizado) — formato "funcional mas não polido" (`{"value":"uuid"}` em vez de string direta); revisável sem quebrar a arquitetura quando o React tiver requisitos concretos de formato.
+- CORS/WebSocket `allowedOriginPatterns` liberados amplamente por padrão de desenvolvimento (`http://localhost:5173`/`*` no handshake WS) — precisam ser restringidos antes de qualquer deploy exposto publicamente.
+
+**Impacto por Camada:**
+- **Domain:** `Conta`/`PerfilDeServidor` (novos, records com identidade). `PoolDeProxies` ganha `adicionar`/`remover`/`listar` (aditivo). `Bot` ganha `definirOuvinteDeEstado`/notificação em cada transição (aditivo). `SaidaDoOperador` ganha `definirOuvinte`/notificação em `imprimir` (aditivo).
+- **Application:** `application.registry` (novo pacote) — `GerenciadorDeBots`, `NotificadorDeEventos`, `EventoDeBot`. `application.port` ganha `RepositorioDeContas`/`RepositorioDeServidores`. `application.usecase` ganha `CasoDeUsoRemoverBot`/`CasoDeUsoIniciarBot`/`CasoDeUsoPararBot`/`CasoDeUsoPausarBot`/`CasoDeUsoRetomarBot`. `CasoDeUsoCriarBot` ganha `GerenciadorDeBots` no construtor (única assinatura pré-existente alterada nesta milestone).
+- **Infrastructure:** `infrastructure.persistence` deixa de estar vazio (`RepositorioDeContasEmMemoria`/`RepositorioDeServidoresEmMemoria`). `infrastructure.config` ganha `ConfiguracaoDeCasosDeUso` (wiring dos ~24 Casos de Uso de ação/inventário, nunca antes expostos como bean), `ConfiguracaoDeComandos` (wiring do `GerenciadorDeComandos`), `ConfiguracaoDePersistencia`, `ConfiguracaoWeb`, `ApiKeyFilter`.
+- **Interfaces:** `interfaces.rest` (novo, irmão de `interfaces.comando`) — 11 controllers (`Bot`/`Acao`/`Inventario`/`Mundo`/`Macro`/`Comando`/`Conta`/`Servidor`/`Proxy`/`Log`/`Metricas`), DTOs, `GlobalExceptionHandler`, `PaginacaoSupport`, `BotLookup`, `RecursoNaoEncontradoException`. `interfaces.websocket` (novo) — `WebSocketConfig`, `BotEventsWebSocketHandler`.
+
+**Relação com Decisões Anteriores:** Não reabre nem contradiz nenhuma DEC de protocolo/domínio (DEC-01 a DEC-39) — nenhum Packet/Codec/Handler alterado. Consome integralmente a infraestrutura de execução da **DEC-29/DEC-33** (`MotorDeExecucaoPort`, `Bot.iniciar/pausar/retomar/parar`) e de reconexão da **DEC-30/DEC-31** (`CasoDeUsoConectarBot`/`CasoDeUsoDesconectarBot`/`CasoDeUsoReconectarBot`, `PoolDeProxies`). Conecta pela primeira vez em produção a camada `interfaces.comando` aprovada pela **DEC-23** (Milestone 12) e nunca antes instanciada fora de teste. Segue a mesma disciplina de porta+adapter já usada por **DEC-21** (`ConexaoBotPort`) e **DEC-33** (`MotorDeExecucaoPort`) para os novos `RepositorioDeContas`/`RepositorioDeServidores`. Diverge deliberadamente da política padrão do `CLAUDE.md` de "legado C# como fonte de verdade" — autorizado explicitamente pelo responsável só para esta milestone, por não haver comportamento de legado a preservar (API REST/WebSocket não existe no C#).
+
+**Impacto na Implementação Java:** Ver "Impacto por Camada" acima — resumo por número de arquivos: 1 pom.xml (4 dependências: `spring-boot-starter-web`, `spring-boot-starter-websocket`, `spring-boot-starter-validation`, `springdoc-openapi-starter-webmvc-ui`), ~9 classes de domínio/aplicação/infraestrutura novas ou ajustadas fora de `interfaces`, ~50 classes novas em `interfaces.rest`/`interfaces.websocket` (controllers + DTOs), `application.yml` ganha `advancedbot.api.key`/`advancedbot.cors.allowed-origins`/`springdoc.*`. 1089 testes automatizados (1072→1089, +17), 0 falhas, 0 erros, 3 skipped deliberadamente; validação adicional end-to-end via `mvn spring-boot:run` real (criar servidor/conta → criar bot → listar/detalhar → iniciar → ativar macro `twerk` → evento recebido via WebSocket em `/ws/events` → métricas → pausar → 409 ao pausar de novo → remover → 404 após remover → 401 sem `X-API-Key`).
+
+**Data:** 2026-07-25
+
+**Responsável:** Mateus Botega (instrução explícita para mudar o foco do projeto de "portar funcionalidades" para "executar bots reais através da aplicação Java"; API REST/WebSocket como primeira entrega do EPIC-APP1; instrução explícita de não consultar o legado C# nesta etapa; instrução explícita de implementar pequenos ajustes arquiteturais necessários para expor os Casos de Uso no mesmo épico, evitando novas abstrações quando as existentes já bastavam.)
+
+---
+
+### DEC-41 — EPIC-APP2: Cobertura Completa da API para as 12 Telas do React (Milestone 41)
+
+**Contexto:** Após o EPIC-APP1 (DEC-40), o responsável mapeou 12 telas que o React vai precisar
+(Dashboard, Lista de Bots, Bot Details, Console, Inventário, Equipamentos, Containers, Mundo,
+Jogadores, Comandos, Macros, Configuração) e pediu para fechar todo gap de exposição, com a
+hipótese de que "o domínio já faz, falta só endpoint". Investigação confirmou isso majoritariamente,
+com **4 exceções reais de dado ausente no domínio** (não é falta de endpoint, é falta de dado) —
+listadas abaixo, decisão consciente de não fabricar dado que o protocolo/domínio não fornece.
+
+**Legado consultado:** Nenhum, mesmo desvio autorizado e mesma justificativa da DEC-40 (API não
+existe no legado C#).
+
+**Decisões Tomadas:**
+
+1. **`BotResponse` enriquecido** — uma chamada a `GET /api/v1/bots` devolve, por bot: proxy, macros
+   ativas (nomes), posição/rotação, vida, `autoReconnect`, `msDesdeUltimoKeepAlive`. Decisão de
+   design: inventário completo e entidades próximas ficam **fora** do row de lista (payload pesado
+   ×N bots) — convenção REST padrão (lista = resumo, detalhe = completo via sub-recursos). O
+   próprio `GET /api/v1/bots/{id}` reaproveita a mesma classe (nenhum DTO duplicado).
+2. **Equipamento** (`GET /bots/{id}/inventario/equipamento`) — `InventarioDoJogador` ganha 5
+   getters nomeados (`capacete`/`peitoral`/`calca`/`botas`/`itemNaMao`), mesmos índices já usados
+   cruamente por `MacroUtils`/`SessaoDeJogo` (5-8 armadura, 36+slotAtivo mão) desde as Milestones
+   14/25/32 — nenhuma regra nova, só nomeação.
+3. **Container/Janela** (`GET /bots/{id}/inventario/janela`) — zero mudança de domínio,
+   `SessaoDeJogo.janelaAtual()`/`itemNoCursor()` já existem desde a DEC-37 (Milestone 32), nunca
+   expostos. Path ficou aninhado sob `/inventario` (não `/bots/{id}/janela` como o rascunho inicial
+   cogitou) por simplicidade de roteamento Spring dentro do `InventarioController` já existente —
+   sem impacto de domínio, só convenção de URL.
+4. **Mundo**: `EstadoMundoResponse` ganha `chunkAtual` (computado `x>>4`/`z>>4` no DTO, mesmo
+   cálculo que `Mundo.blocoEm` já faz internamente) e `msDesdeUltimoKeepAlive`. `GET
+   /bots/{id}/mundo/entidades` ganha filtro opcional `?tipo=mob|jogador` (mesmo endpoint, sem
+   criar rota nova).
+5. **Catálogos globais**: `GET /api/v1/commands` (todos os `Comando*` registrados, via
+   `GerenciadorDeComandos.comandos()` já existente) e `GET /api/v1/macros` (subconjunto filtrado
+   pelas 8 classes de `Comando*` que fazem toggle de `TarefaContinua` — `ComandoFollow`/
+   `ComandoAntiAFK`/`ComandoHerbalismo`/`ComandoMinerar`/`ComandoMob`/`ComandoAutoFish`/
+   `ComandoLargarTudo`/`ComandoTwerk` — reaproveitando o mesmo metadado nome/descrição/aliases/
+   parâmetros, sem catálogo duplicado).
+6. **Configuração por bot**: `PUT /bots/{id}/proxy` expõe `Bot.trocarProxy` (já existia desde a
+   Milestone 22/DEC-31, nunca tinha caminho de produção). `PUT /bots/{id}/auto-reconnect` exigiu
+   2 métodos aditivos novos — `SessaoBot.comAutoReconnect(boolean)` (wither, mesmo padrão de
+   `connect()`/`disconnect()`) e `Bot.definirAutoReconnect(boolean)` — porque **não existia
+   nenhum caminho alcançável** para ligar `autoReconnect` (campo só era carregado adiante desde a
+   criação do `SessaoBot`, nunca mutado; `GerenciadorDeReconexao` já lia esse campo desde a
+   DEC-31, mas nada o definia como `true`). `GET /api/v1/configuracao/reconnect-policy` expõe o
+   bean `PoliticaDeReconexaoComJitter` (intervalo base/jitter) só-leitura — a política é singleton
+   de processo, sem override por bot no domínio; não fabricado o que o domínio não suporta.
+7. **Dashboard/Métricas**: `MetricasResponse` ganha `porEstadoDeSessao` (online/conectando/
+   offline), `memoria` (via `Runtime`), `uptimeMs`/`cpuLoad` (via `java.lang.management`, **sem**
+   `spring-boot-starter-actuator` — dependência nova evitada, dado já acessível pela JVM padrão) e
+   `motorDeTick` (via instrumentação nova em `MotorDeTick`: 2 campos voláteis
+   `ultimoInicioTickEm`/`duracaoUltimoTickMs`, atualizados no início/fim de `tick()`, sem alterar
+   a ordem/lógica de execução dos bots).
+8. **Evento `tipo:"comando"` no WebSocket** — `ComandoController`/`MacroController` publicam via
+   `NotificadorDeEventos` (já existente desde a DEC-40) após cada execução, para o React distinguir
+   "isto veio de um comando" no console — dado que já existia (o comando já foi executado), só
+   passa a ser anunciado em tempo real.
+9. **4 limitações documentadas, deliberadamente não implementadas:**
+   - **Bioma** — descartado no decode do chunk desde a Milestone 7 (`SecoesDeChunkCodec`/
+     `MapChunkBulkCodec` preenchem com zero); não existe em `Mundo`/`Chunk`. Exigiria reabrir
+     codec de protocolo — fora de escopo de uma API epic (é trabalho de milestone de protocolo).
+   - **NPCs** — protocolo 1.8 não tem um tipo de entidade "NPC" distinto; `EntidadeRemota` é
+     `sealed` com só `EntidadeJogadorRemoto`/`EntidadeMob`. Nada a expor além do que
+     `/mundo/entidades` já cobre.
+   - **Ping real (RTT)** — o client nunca mediu round-trip; só existe timestamp do último
+     KeepAlive recebido. Exposto como `msDesdeUltimoKeepAlive` (nome honesto), não como "ping"
+     fabricado — decisão deliberada de não simular um dado que o protocolo não garante
+     (`KeepAlive` do protocolo 1.8 usa um id opaco, não timestamp).
+   - **Separação chat/erro/comando/stdout no console** — `SaidaDoOperador` é buffer único por
+     design (DEC-26); tipo de mensagem só existe por convenção de cor (`§c`=erro, `§a`=sucesso),
+     não por campo. Retag exigiria tocar dezenas de call sites `imprimir(String)` em toda a
+     `interfaces.comando`/domínio — fora de proporção para esta API epic. O evento `"comando"`
+     (item 8) é o paliativo: não separa logs existentes, mas dá ao React um segundo canal.
+
+**Justificativa:** Mesma disciplina da DEC-40 — toda API nova é orquestração pura (DTO → domínio/
+Caso de Uso já existente → DTO), únicos ajustes de domínio são aditivos (getters nomeados,
+withers, instrumentação) ou wiring. As 4 limitações são tratadas com a mesma honestidade dos
+"campos sentinela documentados" já usados em DECs anteriores (ex.: DEC-28 `amplifierCeleridade=-1`)
+— expor dado real e ausente é preferível a fabricar aproximação sem aviso.
+
+**Consequências:**
+
+*Positivas:*
+- React consegue montar as 12 telas mapeadas pelo responsável com no máximo 1 chamada de lista +
+  poucas chamadas de sub-recurso por bot (não 15+).
+- Dashboard passa a ter métricas de processo reais (memória/uptime/CPU/tick) sem nova dependência.
+- `auto-reconnect` por bot, antes inalcançável por qualquer caminho de produção, agora é
+  controlável via API.
+
+*Negativas:*
+- Bioma/NPC/ping real/separação de log continuam ausentes — se o React precisar de algum desses,
+  é trabalho de milestone própria (protocolo para bioma; instrumentação de RTT client-side para
+  ping; retag de `SaidaDoOperador` para separação de log), não desbloqueável só na camada API.
+  `msDesdeUltimoKeepAlive`/evento `"comando"` são paliativos parciais, não substitutos completos.
+- `motorDeTick.tps` é aproximação (`1000/duracaoUltimoTickMs` do último ciclo), não uma média
+  observada — pode oscilar bastante com poucos bots/tarefas leves.
+- `GET /bots/{id}/inventario/janela` ficou aninhado sob `/inventario` em vez de um recurso irmão
+  `/bots/{id}/janela` (decisão de implementação, não de domínio) — path revisável sem quebra se o
+  React preferir a rota irmã.
+
+**Impacto por Camada:**
+- **Domain:** `InventarioDoJogador` ganha `capacete`/`peitoral`/`calca`/`botas`/`itemNaMao`
+  (aditivo). `SessaoBot` ganha `comAutoReconnect(boolean)` (wither, aditivo). `Bot` ganha
+  `definirAutoReconnect(boolean)` (aditivo). `SessaoDeJogo` ganha `msDesdeUltimoKeepAlive()`
+  (aditivo, deriva do timestamp já existente).
+- **Application:** `application.usecase` ganha `CasoDeUsoTrocarProxy`/
+  `CasoDeUsoDefinirAutoReconnect` (cascas finas). Nenhum Port novo.
+- **Infrastructure:** `MotorDeTick` ganha instrumentação de timing (aditivo, sem mudar lógica de
+  tick). `ConfiguracaoDeExecucao.politicaDeReconexao()` muda o tipo de retorno declarado de
+  `PoliticaDeReconexao` (interface) para `PoliticaDeReconexaoComJitter` (concreto) — necessário
+  para `ConfiguracaoController` ler `intervaloBase`/`jitterMaximo`, ausentes na interface;
+  permanece injetável onde só a interface é pedida (`GerenciadorDeReconexao`), por assinabilidade.
+- **Interfaces:** `interfaces.rest.v1` ganha `CatalogoController`/`ConfiguracaoController`
+  (novos); `BotController` ganha `PUT /proxy`/`PUT /auto-reconnect`; `InventarioController` ganha
+  `/equipamento`/`/janela`; `MundoController` ganha filtro `?tipo`; `MetricasController`
+  reescrito; `ComandoController`/`MacroController` passam a publicar evento `"comando"`. ~15 DTOs
+  novos em `interfaces.rest.dto`, `BotResponse`/`MetricasResponse`/`EstadoMundoResponse`
+  reescritos (campos aditivos).
+
+**Relação com Decisões Anteriores:** Consome integralmente a infraestrutura da **DEC-40**
+(`GerenciadorDeBots`, `NotificadorDeEventos`, `GerenciadorDeComandos` já conectado). Não reabre
+nenhuma DEC de protocolo/domínio (DEC-01 a DEC-39) — bioma permanece exatamente como a Milestone 7
+o deixou (não modelado), NPCs permanecem sem tipo próprio (mesma leitura da DEC-38 sobre
+`EntidadeRemota` sealed). Estende a **DEC-31** (autoReconnect/`PoliticaDeReconexaoComJitter`) com
+o primeiro caminho de mutação em runtime desse campo. Mesma disciplina de "casca fina" de Caso de
+Uso já estabelecida na **DEC-40** (`CasoDeUsoIniciarBot` etc.) aplicada a `CasoDeUsoTrocarProxy`/
+`CasoDeUsoDefinirAutoReconnect`.
+
+**Impacto na Implementação Java:** 4 arquivos de domínio ajustados (aditivo), 2 Casos de Uso
+novos, 1 bean de configuração com tipo de retorno mais específico, 5 controllers ajustados + 2
+novos, ~15 DTOs novos. `application.yml` inalterado. 1098 testes automatizados (1089→1098, +9),
+0 falhas, 0 erros, 3 skipped deliberadamente; validação adicional end-to-end via `mvn spring-boot:
+run` real e WebSocket (Node.js nativo): catálogo de comandos (38)/macros (8) → política de
+reconexão → bot enriquecido na lista → auto-reconnect on → troca/remoção de proxy → 409 correto em
+equipamento/janela/entidades sem sessão de jogo → métricas com memória/uptime/CPU/tick reais →
+evento `"comando"` recebido via WebSocket ao ativar macro `twerk`.
+
+**Data:** 2026-07-25
+
+**Responsável:** Mateus Botega (mapeamento das 12 telas do React e pedido explícito de cobertura
+completa de endpoints "visando cobrir todos os cenários possíveis de consumo das funcionalidades
+migradas"; aceite implícito das 4 limitações de dado ausente reportadas antes da implementação,
+sem fabricar dado que o domínio/protocolo não fornece.)
+
+---
+
+### DEC-42 — EPIC-FRONT-01: Persistência PostgreSQL, Testes de Integração REST e Correção de CORS (Milestone 42)
+
+**Contexto:** Com a API REST/WebSocket funcionalmente completa (DEC-40/DEC-41), o responsável
+declarou a migração funcional C#→Java concluída dentro do escopo aprovado e pediu preparação
+definitiva do backend para consumo pelo React em produção: substituir a persistência in-memory de
+Conta/Servidor/Proxy por PostgreSQL (stack oficial, nunca efetivamente ligada até aqui), cobrir a
+camada REST com testes de integração (inexistentes até esta sessão — DEC-40/DEC-41 só tinham
+validação manual) e validar CORS/WebSocket para o ambiente de desenvolvimento.
+
+**Legado consultado:** Nenhum — mesma justificativa da DEC-40/DEC-41 (persistência/infraestrutura
+de API não tem equivalente no C#, que nunca teve banco de dados nem API).
+
+**Decisões Tomadas:**
+
+1. **Adapters JPA substituem os in-memory** — `RepositorioDeContasJpa`/`RepositorioDeServidoresJpa`
+   (`infrastructure.persistence`) implementam as portas `RepositorioDeContas`/`RepositorioDeServidores`
+   já existentes (nenhuma assinatura alterada); `RepositorioDeContasEmMemoria`/
+   `RepositorioDeServidoresEmMemoria` removidos (substituição integral, não foram mantidos como
+   alternativa por profile). Entidades JPA (`ContaJpaEntity`/`PerfilDeServidorJpaEntity`) vivem só em
+   `infrastructure.persistence.jpa` — os records de domínio (`Conta`/`PerfilDeServidor`) continuam
+   sem nenhuma anotação de framework, mapeamento feito inteiramente no adapter.
+2. **Nova porta `RepositorioDeProxies`** (`application.port`, mesmo padrão de
+   `RepositorioDeContas`/`RepositorioDeServidores`) — `PoolDeProxies` (cache em memória,
+   `domain.bot`) não tinha porta própria de persistência; sem ela, proxies continuariam se perdendo
+   a cada restart mesmo com Postgres disponível. `PoolDeProxies` continua existindo e é carregado a
+   partir do repositório no startup (`ConfiguracaoDeExecucao.poolDeProxies`); `ProxyController`
+   passa a escrever em write-through (repositório primeiro, cache depois) a cada
+   `adicionar`/`remover`. Tabela `proxies` deliberadamente **sem** `UNIQUE (host,port,tipo)` — o
+   `PoolDeProxies` in-memory sempre permitiu entradas duplicadas (`CopyOnWriteArrayList.add` sem
+   checagem); uma constraint nova rejeitaria o que o domínio sempre aceitou, mudando comportamento
+   fora do escopo pedido ("manter compatibilidade total da API atual").
+3. **Schema via Flyway** (`db/migration/V1__contas_servidores_proxies.sql`) — 3 tabelas
+   (`contas`/`servidores`/`proxies`), `hibernate.ddl-auto=validate` (Hibernate nunca gera/altera
+   DDL sozinho, só confere que o mapeamento bate com o que o Flyway já aplicou).
+4. **Credenciais via variável de ambiente** (`ADVANCEDBOT_DB_URL`/`ADVANCEDBOT_DB_USER`/
+   `ADVANCEDBOT_DB_PASSWORD`), mesmo padrão de `advancedbot.api.key`/`advancedbot.cors.allowed-origins`
+   — default de desenvolvimento local aponta para um role/banco dedicados (`advancedbot`/`advancedbot`
+   em `localhost:5432/advancedbot`), criados nesta sessão num PostgreSQL 18 já instalado na máquina
+   (credencial de superusuário fornecida pelo responsável mediante pedido explícito, nunca lida por
+   engenharia reversa/força bruta).
+5. **`EntityScan`/`EnableJpaRepositories` explícitos em `AdvancedBotApplication`** — achado técnico
+   não previsto: `@SpringBootApplication(scanBasePackages="com.advancedbot")` cobre o component scan
+   comum, mas `AutoConfigurationPackages` (usado pelo scanner de `@Entity`/`JpaRepository`) deriva do
+   pacote da própria classe anotada (`com.advancedbot.application.bootstrap`), não do
+   `scanBasePackages` — sem as duas anotações explícitas, o contexto Spring falhava ao subir
+   (`ContaSpringDataRepository` não encontrado). Documentado aqui por não ter precedente nas DECs
+   anteriores de wiring (DEC-40/DEC-41 nunca precisaram, pois não usavam scanning automático de
+   infraestrutura).
+6. **Testes de integração REST reais** (`ContaControllerTest`/`ServidorControllerTest`/
+   `ProxyControllerTest`, `interfaces.rest.v1`) — primeiros testes de Controller HTTP do projeto
+   (lacuna documentada desde a DEC-40). `@SpringBootTest` + `MockMvc` contra um banco Postgres
+   **real** dedicado a testes (`advancedbot_test`, mesma instância local, nunca o banco de
+   desenvolvimento) em vez de H2/Testcontainers — evita divergência de dialeto SQL e dependência
+   nova (H2) quando o Postgres real já está disponível no ambiente; Docker/Testcontainers
+   indisponíveis nesta máquina. Isolamento entre testes via `@Transactional` (rollback automático),
+   sem necessidade de limpeza manual de tabelas.
+7. **Bug de CORS corrigido em `ApiKeyFilter`** — encontrado ao validar CORS para o React (item
+   explícito do escopo pedido), não pré-existia como pedido isolado: o filtro barrava toda
+   requisição `OPTIONS` (preflight de CORS) com 401 antes do `DispatcherServlet`/CORS do Spring MVC
+   sequer rodar, porque o preflight nunca carrega `X-API-Key` (o navegador só envia
+   `Origin`/`Access-Control-Request-*` no preflight, por especificação). Isso quebrava CORS para
+   qualquer requisição não-simples (todo `PUT`/`DELETE`, todo `POST` com corpo JSON ou com o header
+   `X-API-Key`) — ou seja, praticamente toda a API a partir de um browser. `shouldNotFilter` passa a
+   excluir `OPTIONS`, deixando o preflight ser respondido pelo CORS do Spring MVC normalmente;
+   requisição real seguinte continua exigindo `X-API-Key`. Corrigido no mesmo épico por estar
+   diretamente dentro do escopo pedido ("validar CORS... para ambiente de desenvolvimento").
+
+**Justificativa:** Mesma disciplina de "casca fina"/adapter das DECs anteriores — nenhuma regra de
+negócio nova, só troca do meio de persistência atrás de portas já existentes (ou de uma porta nova
+que segue o mesmo contrato) e correção de um defeito de infraestrutura descoberto ao validar o
+próprio escopo do épico.
+
+**Consequências:**
+
+*Positivas:*
+- Conta/Servidor/Proxy sobrevivem a um restart da aplicação — limitação conhecida desde a DEC-40,
+  agora fechada.
+- Primeira cobertura de teste de integração da camada REST do projeto (0 → 6 testes,
+  `@SpringBootTest`/`MockMvc`/Postgres real), incluindo verificação de `X-API-Key`/404/400.
+- CORS validado e corrigido para o React consumir a API em desenvolvimento; WebSocket
+  (`/ws/events`) confirmado funcional ponta a ponta (conexão + evento de criação de bot) via
+  cliente Node.js nativo.
+- `mvn spring-boot:run` validado manualmente contra PostgreSQL real: Flyway migra o schema do zero
+  no primeiro boot e confirma "up to date" nos boots seguintes (idempotência); CRUD completo de
+  Conta/Servidor/Proxy testado via `curl` e limpo ao final.
+
+*Negativas:*
+- `advancedbot_test` precisa existir na mesma instância Postgres local para os testes rodarem —
+  diferente de Testcontainers, não é automaticamente provisionado; documentado aqui para qualquer
+  ambiente novo (CI, outra máquina) precisar criar o role/banco antes de `mvn clean test`.
+- Flyway 9.22.3 (versão gerenciada pelo Spring Boot 3.2.5) loga aviso de versão não testada contra
+  PostgreSQL 18 ("latest supported version is 15") — funcionou sem erro nesta sessão, mas é
+  candidato a revisão se uma migration futura usar sintaxe recente do Postgres.
+- `RepositorioDeProxies` é uma porta nova (não pedida explicitamente no escopo, que falava em
+  "portas já existentes") — decisão de implementação registrada aqui por ser aditiva, mesmo padrão
+  arquitetural das portas irmãs, e indispensável para fechar a limitação de proxy-em-memória listada
+  na DEC-40; não é mudança de bounded context/agregado.
+
+**Impacto por Camada:**
+- **Domain:** nenhuma mudança (`Conta`/`PerfilDeServidor`/`ConfiguracaoProxy`/`PoolDeProxies`
+  inalterados).
+- **Application:** nova porta `RepositorioDeProxies` (`application.port`).
+- **Infrastructure:** `infrastructure.persistence.jpa` novo (3 `@Entity` + 3 `JpaRepository`);
+  `RepositorioDeContasJpa`/`RepositorioDeServidoresJpa`/`RepositorioDeProxiesJpa` novos,
+  `RepositorioDeContasEmMemoria`/`RepositorioDeServidoresEmMemoria` removidos;
+  `ConfiguracaoDePersistencia` reescrita (beans agora recebem os `JpaRepository` do Spring Data);
+  `ConfiguracaoDeExecucao.poolDeProxies` passa a receber `RepositorioDeProxies`; `ApiKeyFilter`
+  corrigido (`shouldNotFilter` exclui `OPTIONS`); `AdvancedBotApplication` ganha
+  `@EntityScan`/`@EnableJpaRepositories`; `db/migration/V1__contas_servidores_proxies.sql` novo;
+  `application.yml` ganha `spring.datasource`/`spring.jpa`/`spring.flyway`.
+- **Interfaces:** `ProxyController` ganha `RepositorioDeProxies` como colaborador (write-through);
+  `ContaController`/`ServidorController` inalterados (só o bean por trás da porta mudou).
+
+**Relação com Decisões Anteriores:** Fecha a limitação "Repositórios de Conta/Servidor/Proxy em
+memória" documentada na **DEC-40** e não reaberta na **DEC-41**. Não reabre nenhuma DEC de
+protocolo/domínio (DEC-01 a DEC-39) nem os contratos de API da DEC-40/DEC-41 — todo endpoint
+existente mantém request/response idênticos, só o meio de persistência por trás mudou.
+
+**Impacto na Implementação Java:** 3 entidades JPA + 3 `JpaRepository` + 3 adapters novos, 1 porta
+nova (`RepositorioDeProxies`), 1 migration Flyway, 2 classes de configuração ajustadas, 1 correção
+de bug (`ApiKeyFilter`), 3 classes de teste de integração REST novas (6 testes). 1098→1104 testes
+automatizados (+6), 0 falhas, 0 erros, 3 skipped deliberadamente (`mvn clean test` contra
+`advancedbot_test`). Validação manual adicional via `mvn spring-boot:run` contra o banco de
+desenvolvimento real (`advancedbot`): Flyway migra e depois confirma idempotência num segundo boot;
+CRUD de conta/servidor/proxy via `curl`; preflight CORS (origem permitida → 200 com
+`Access-Control-Allow-Origin`; origem não permitida → 403) antes e depois da correção do
+`ApiKeyFilter`; WebSocket `/ws/events` conectado via cliente Node.js nativo durante a criação de um
+bot real.
+
+**Data:** 2026-07-27
+
+**Responsável:** Mateus Botega (declarou a migração funcional C#→Java concluída dentro do escopo
+aprovado e pediu preparação definitiva do backend para produção — persistência PostgreSQL, testes
+de integração REST, validação de CORS/WebSocket — sem consulta ao legado C# e sem endpoints novos
+além dos indispensáveis à persistência; forneceu a credencial de superusuário do PostgreSQL local
+mediante pedido explícito para viabilizar a criação do role/banco dedicados ao app.)

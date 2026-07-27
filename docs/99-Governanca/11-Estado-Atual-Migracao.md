@@ -2932,6 +2932,344 @@ Nova mudança de estratégia (2026-07-23, mesma sessão do artifact "Mapa comple
 
 ---
 
+## Milestone 36 — DEC-38: Reabertura Parcial da DEC-23, Política de Combate (Épico 4)
+
+Status
+
+CONCLUÍDA — decisão de política registrada e único gap de infraestrutura genérica identificado foi fechado. Nenhuma macro (Solk/CommandMob/CommandUseBow) foi implementada nesta sessão.
+
+Objetivo
+
+Resolver o bloqueio do Épico 4, registrado desde a Milestone 35: a DEC-23 excluía "automação/combate" (`CommandKillAura`/`CommandMiner`/`CommandHerbalism`/`CommandAntiAFK`/`Solk.*`) como um único item indiferenciado. Instrução explícita do responsável nesta sessão: separar (a) combate como mecanismo genérico — ataque automático indiscriminado, PvP automático, ataque através de parede, qualquer forma de KillAura/Aura — de (b) macros do legado cujo propósito não é combate, mas cuja máquina de estados inclui atacar uma entidade específica já identificada como uma etapa entre várias (ex.: `CommandMob.hitarMob()` ataca só o `EntityMob` já resolvido por `buscarMobProximo()`).
+
+### Entregue
+
+- **DEC-38** (`01-Decisoes-Arquiteturais.md`): reabre parcialmente a DEC-23 (mesmo padrão da DEC-32/DEC-35 sobre a DEC-22 — nenhum texto da DEC-23 é alterado). Formaliza Categoria 1 (automação de combate genérica — permanece fora de escopo, sem exceção, sem prazo) separada da Categoria 2 (ataque a entidade específica já resolvida, como etapa de uma automação de negócio maior — passa a candidata, aprovação individual macro por macro). Fundamenta a distinção no precedente já em produção desde a Milestone 34: `UseEntityPacket`/`SessaoDeJogo.interagirComEntidade`/`ComandoUseEntity` já tratam ataque pontual a alvo específico como interação com o mundo, não como combate, com zero DEC própria à época.
+- **`EntidadesDoMundo.mobMaisProximo(x, y, z, raio): EntidadeMob`** (novo — `domain.bot`) — única lacuna de infraestrutura genérica identificada: não existia nenhuma forma de localizar a `EntidadeMob` mais próxima por proximidade (equivalente genérico de `buscarMobProximo()` do legado; `porId`/`porUuid` já existiam, mas nenhuma busca por tipo+proximidade). Primitiva pura, mesma categoria de `Mundo.tracarRaio` (DEC-24) — sem Packet, sem Port, sem Use Case, sem checagem de linha de visão (fiel ao `CanSeeEntity` desativado no próprio legado). Raio é parâmetro do chamador, não constante travada (regra de três, DEC-18) — primeiro consumidor genérico.
+- Todo o restante da infraestrutura necessária para as macros da Categoria 2 (`UseEntityPacket`, `interagirComEntidade`, `Mundo.tracarRaio`, `GuiaDeCaminho`, `MotorDeTick`/`TarefaContinua`) já existia e foi apenas confirmada como reutilizável — nenhuma mudança adicional.
+- **`Solk`/`CommandMob`/`CommandMobTeleport`/`CommandPesca` e `CommandUseBow` continuam não implementados** — desbloqueados como candidatos pela DEC-38, mas cada um exige aprovação individual do responsável ("caso aprovado") antes de qualquer código de macro, exatamente como qualquer outra macro da Fase 2.
+
+### Testes
+
+5 testes novos em `EntidadesDoMundoTest` (`mobMaisProximo`: nenhum mob registrado, único mob fora do raio, mais próximo dentre vários dentro do raio, ignora `EntidadeJogadorRemoto`, mob exatamente na borda do raio).
+
+### Validação executada
+
+`mvn test` (JDK 21.0.9, Maven 3) — BUILD SUCCESS, **1041 testes executados, 0 falhas, 0 erros, 3 skipped** (mesmos 3 de sempre). 1036→1041 (+5), mudança 100% aditiva. Zero interface pública pré-existente alterada. Zero Packet/Port/agregado/bounded context novo. **Épico 4 do backlog global desbloqueado quanto à política** — a implementação de cada macro específica (Solk/CommandMob, CommandUseBow) permanece pendente de aprovação individual do responsável.
+
+---
+
+## Milestone 37 — Solk/CommandMob (Categoria 2/DEC-38): Macro de Farm de Mob
+
+Status
+
+CONCLUÍDA — `TarefaMob`/`ComandoMob` (porte de `Solk/CommandMob.cs`, "solkmob") implementados por composição pura sobre capacidades já aprovadas. Zero DEC nova (mesmo padrão "crescimento aditivo" da Milestone 35 — nenhuma decisão arquitetural nova, só liga primitivas já existentes e as duas capacidades genéricas extraídas nesta sessão).
+
+Objetivo
+
+Aprovação individual do responsável para reconstruir integralmente `CommandMob`/Solk (Categoria 2 da DEC-38 — ataque à entidade já resolvida por `buscarMob`, uma entre várias etapas de uma automação de farm/venda/troca de ferramenta, não combate genérico). Decompor a macro em capacidades reutilizáveis antes de codificar, reaproveitar tudo que já existe, implementar só o realmente ausente, e generalizar qualquer capacidade que sirva outras macros.
+
+### Decomposição (antes de codificar)
+
+`CommandMob` tem 8 fases reais (RECEM_LOGOU, BUSCAR_MOB, VERIFICAR_INVENTARIO, TROCAR_FERRAMENTA, VENDER, MATAR_MOB, MOB_NAO_ENCONTRADO, e VERIFICAR_POCAO — inalcançável com a config default, ver divergências). Nenhuma delas exigiu Packet/Port/agregado novo:
+
+- **Buscar mob por proximidade**: `EntidadesDoMundo.mobMaisProximo` (Milestone 36/DEC-38) — já pronta, primeiro consumidor de produção.
+- **Atacar a entidade já resolvida**: `SessaoDeJogo.interagirComEntidade`/`UseEntityPacket`/`ACAO_ATACAR_ENTIDADE` (Milestone 34) — já pronta.
+- **Mirar a entidade / pular após teleporte**: `olharParaEntidade` (Milestone 28), `pular()`+`aplicarFisica()` (mesma substituição de `$move j N` já usada em `TarefaAntiAFK`/`TarefaAutoFish`/`TarefaTwerk`) — já prontas.
+- **Abrir baú por coordenada / trocar ferramenta / limpar espadas extras**: Container/Janela (DEC-37, `moverItem`/`localizarEspacoLivreNaJanela`/`fecharJanela`) — já pronto. **Abrir com retentativa** (`MacroUtils.abrirBau` do legado) só existia como método **privado** dentro de `TarefaAutoFish` (`tentarAbrirBau`) — extraído nesta sessão para `AbridorDeBau` (novo, `domain.bot`, package-private), reaproveitado pelas duas macros (regra de três aplicada uma única vez).
+- **Clicar bloco com botão direito (raycast + `colocarBloco`)**: idem — também só existia privado em `TarefaAutoFish`, extraído para `MacroUtils.clicarBlocoComBotaoDireito` (novo, `domain.bot`, package-private).
+- **Clicar placa de compra/venda N vezes agachando** (`MacroUtils.comprar`/`vender` do legado — mesma forma, N diferente): generalizado como `MacroUtils.clicarPlacaAgachando(sessaoDeJogo, x, y, z, vezes)` (novo) — `TarefaAutoFish.comprarLinhaComprando` (vezes=4) e `TarefaMob.venderVendendo` (vezes=6) reaproveitam a mesma função.
+- **Contar slots vagos do inventário** (`MacroUtils.contarQntDeSlotsVagos` do legado): generalizado como `MacroUtils.contarSlotsVagos` (novo) — mesmo caso, extraído de `TarefaAutoFish` e reaproveitado por `TarefaMob`.
+- **Resolver slot unificado / item na mão**: idem, extraídos para `MacroUtils.slotUnificadoDoInventario`/`MacroUtils.itemNaMao` (novos) — mesma lógica que já existia privada em `TarefaAutoFish`.
+- **Busca de baú por cubo ao redor dos pés** (`CommandMob.buscarBauProximo`): algoritmo próprio de `CommandMob`, **não** unificado com `TarefaAutoFish.detectarBaus` (ordem de varredura e seleção diferentes já no próprio legado, entre os dois comandos) — implementado como método privado em `TarefaMob`, fiel ao original.
+- **Máquina de estados / execução contínua**: `TarefaContinua`/`MotorDeTick`/`Bot.registrarTarefa` (Milestone 21/24) — já prontos, mesmo padrão de toggle de `ComandoAutoFish`/`ComandoAntiAFK`.
+
+Nenhuma capacidade nova de protocolo, pathfinding (`CommandMob` usa exclusivamente teleporte por comando de chat, fiel ao legado) ou física horizontal foi necessária.
+
+### Entregue
+
+- **`domain.bot.MacroUtils`** (novo, package-private) — `clicarBlocoComBotaoDireito`, `clicarPlacaAgachando`, `contarSlotsVagos`, `slotUnificadoDoInventario`, `itemNaMao`. Extraído de `TarefaAutoFish` (que tinha essas 5 capacidades duplicadas como métodos privados) no momento em que `TarefaMob` precisou de 4 delas — `TarefaAutoFish` refatorada para reaproveitar em vez de manter a duplicata.
+- **`domain.bot.AbridorDeBau`** (novo, package-private) — abrir baú com até 11 retentativas/~2s (fiel a `MacroUtils.abrirBau`), extraído de `TarefaAutoFish.tentarAbrirBau` pelo mesmo motivo, reaproveitado por `TarefaMob`.
+- **`domain.bot.TarefaMob`** (novo, porte de `Solk/CommandMob.cs`) — 12 sub-estados internos (RECEM_LOGOU, BUSCAR_MOB, MOB_NAO_ENCONTRADO, VERIFICAR_INVENTARIO, TROCAR_FERRAMENTA_TELEPORTANDO/ABRINDO_BAU/TROCANDO/VOLTANDO, VENDER_TELEPORTANDO/VENDENDO/VOLTANDO, MATAR_MOB), 100% composição sobre as capacidades acima.
+- **`interfaces.comando.ComandoMob`** (novo, aliases `solkmob`/`mob`) — toggle simples sobre `TarefaMob`, mesmo padrão de `ComandoAutoFish`.
+- Divergências documentadas na própria classe (não capacidades ausentes, mesma disciplina das macros anteriores): (1) `FileLock` multi-conta/multi-processo do legado sem equivalente (arquitetura single-tenant, DEC-09); (2) `VERIFICAR_POCAO`/`BUSCAR_POCAO` inalcançável com a config default (`homesVenda` sem "blaze"), config por conta não portada (mesma decisão já tomada por `TarefaAutoFish`); (3) filtro de encantamento Flame ao trocar espada depende de NBT, lacuna já registrada desde a Milestone 17/DEC-28; (4) limpeza de espadas extras em slots indevidos portada sem os laços de retentativa com poll real do legado (predição otimista, mesma simplificação do Container Framework/DEC-37); (5) `$move j N` sempre vira `pular()+aplicarFisica()`; (6) esperas encadeadas viram um único portão de tempo real; (7) interrupções reativas a chat de outra conta/servidor não portadas (dependem do parser de `ChatComponent`, lacuna já registrada desde a Milestone 5 Incremento 3); (8) os 850 hits de `MATAR_MOB` são distribuídos em ataques individuais gated a cada 100ms (não um laço bloqueante de ~85s, que travaria o `MotorDeTick`), mesmo idioma não-bloqueante de `TarefaAutoFish.pescar()`.
+- Zero DEC nova (a política já foi decidida pela DEC-38 na Milestone 36; esta milestone só implementa dentro dela). Zero Packet/Port/agregado/bounded context novo. Zero interface pública pré-existente alterada (a refatoração de `TarefaAutoFish` moveu métodos privados para `MacroUtils`/`AbridorDeBau`, sem mudar nenhum comportamento observável nem assinatura pública).
+
+### Macros agora desbloqueadas
+
+`Solk/CommandMob` portado e funcional. **Candidatos remanescentes do Épico 4** (não implementados nesta sessão, mesma categoria "aprovação individual" da DEC-38): `CommandMobTeleport` (Solk, vivo no legado) e `CommandUseBow` quando limitado a mirar/disparar contra um alvo já identificado. `CommandMobPlus`/`CommandPescaV2` continuam código morto confirmado (nunca registrados em `CommandManagerNew` no legado) — não candidatos.
+
+### Testes
+
+10 testes novos: `TarefaMobTest` (8 — teleporte inicial envia `/spawn`+`/home mob`; não repete ação aguardando; no-op sem sessão; encontra mob dentro do raio e inicia combate; não encontra mob fora do raio e reenvia `/home mob`; ataca a entidade já resolvida em `MATAR_MOB` via `UseEntityPacket`/`ACAO_ATACAR_ENTIDADE`; volta para `VERIFICAR_INVENTARIO` quando o mob desaparece; vai para `TROCAR_FERRAMENTA` quando a espada está ausente/gasta), `ComandoMobTest` (2 — liga/desliga o toggle). `TarefaAutoFishTest`/`ComandoAutoFishTest` existentes continuam 100% verdes após a extração de `MacroUtils`/`AbridorDeBau` (nenhum comportamento mudou, só a localização do código).
+
+### Validação executada
+
+`mvn test` (JDK 21.0.9, Maven 3) — BUILD SUCCESS, **1051 testes executados, 0 falhas, 0 erros, 3 skipped** (mesmos 3 de sempre). 1041→1051 (+10), mudança 100% aditiva (mais a refatoração interna, sem impacto observável, de `TarefaAutoFish`).
+
+---
+
+## Milestone 38 — Pivô de Estratégia: Unidade de Trabalho passa a ser Capacidade Fundamental (Foundation APIs)
+
+Status
+
+CONCLUÍDA — matriz de domínios funcionais levantada a partir do conhecimento acumulado (sem nova auditoria macro por macro); Foundation APIs faltantes identificadas e implementadas por extração de duplicação já existente. Nenhuma macro nova implementada ou conectada nesta sessão.
+
+Objetivo
+
+Instrução explícita do responsável: a partir desta sessão a unidade de trabalho deixa de ser Macro/Épico e passa a ser Capacidade Fundamental reutilizável — o objetivo é que qualquer macro futura seja pura composição sobre uma API completa de interação do bot com o mundo, sem exigir infraestrutura nova. Sessão restrita a: agrupar ações por domínio funcional, marcar o que já existe/falta, implementar só as Foundation APIs realmente ausentes (reutilizáveis, sem decisão arquitetural nova, sem duplicação) — nenhuma macro implementada ou conectada.
+
+### Matriz de Domínios Funcionais
+
+Levantada a partir das ~29 macros do legado (`AdvancedBot.Client.Commands`, inventário já fechado desde a DEC-23) cruzadas com o estado Java acumulado das Milestones 1-37 — sem reabrir nenhuma análise de macro individual já feita.
+
+| Domínio | Capacidades | Estado |
+|---|---|---|
+| Blocos | quebrar (3 status)/colocar/olhar/raycast/dureza-material-ferramentas | Fechado (M10/13/14/17, DEC-24/25/28) |
+| Entidades | interagir-atacar/olhar/buscar-mob-por-proximidade/buscar-jogador-visível-por-proximidade/ciclo-de-vida (spawn/move/teleport/effects) | Fechado (M5/28/34, DEC-38/M36; LOS genérica p/ mob deliberadamente fora de escopo, decisão própria da DEC-24) |
+| Inventário | ler/mover/largar/pegar/selecionar-hotbar/localizar-item/localizar-espaço-livre/**selecionar-item-na-hotbar** | Fechado (M5.5/10, agora com busca genérica — ver Foundation APIs) |
+| Containers (baú/fornalha/brewing/beacon/anvil/hopper/dispenser/trade-NPC/cavalo) | abrir/clicar/shift-clique/trocar/confirmar-transação/fechar/**abrir-com-retentativa** | Fechado a nível de primitiva (DEC-37, `tipo` genérico por string — qualquer Window do protocolo); nenhuma macro ainda usa fornalha/brewing/anvil/beacon/hopper/dispenser, mas a primitiva já serve todos sem código novo |
+| NPCs (trade real de Villager) | — | Sem gap real: nenhuma macro do legado usa trade de Villager (só placas de loja via clique de bloco genérico) |
+| Placas | clicar (raycast+botão direito)/**clicar N vezes agachando** | Fechado p/ interação; leitura de texto (Update Sign CB) sem consumidor no legado |
+| Portais | localizar/detectar | Fechado (RegistroDePortais, M29) |
+| Chat | enviar/receber-bruto | Fechado p/ envio/recebimento; parser de `ChatComponent`/JSON permanece lacuna registrada desde M5 Incremento 3 — exige decisão própria, fora desta sessão |
+| Movimento | mover/olhar/pular/física vertical+horizontal/pathfinding (`GuiaDeCaminho`/`criarCaminhoPara`) | Fechado dentro do escopo já decidido; MoveQueue/Movement-por-yaw permanece excluído por decisão própria (DEC-36) |
+| Combate (Categoria 2) | atacar entidade já identificada | Fechado (DEC-38); Categoria 1 (KillAura) permanentemente excluída por política |
+| Itens | usar-na-mão/soltar-em-uso/**item-na-mão (unificado)** | Fechado; NBT permanece lacuna registrada desde M17/DEC-28 |
+| Equipamentos | ler equipamento de entidades remotas; **seleção automática de melhor ferramenta** | Fechado — bot nunca veste armadura própria no legado (confirmado M33, não é lacuna) |
+| Efeitos | ler efeitos de entidades remotas (mirror) | Parcial — efeitos do PRÓPRIO bot (auto-buff) é lacuna já registrada na DEC-28, exige decisão própria |
+| Mundo | ler bloco/chunk/raycast/dados de bloco | Fechado (M5/13, `Mundo`/`RegistroDeBlocos`) |
+| Crafting | — | Sem gap real: nenhuma macro do legado craftea automaticamente (clique de slot genérico já cobre o grid quando necessário) |
+| Furnace/Brewing/Beacon/Anvil/Dispenser/Hopper | abrir/clicar slots (genérico) | Fechado a nível de primitiva (Container Framework, DEC-37) — específicos de receita/propriedade (`Window Property`) deliberadamente não implementados, sem precedente no legado |
+
+### Foundation APIs Criadas Nesta Sessão
+
+Todas por extração de duplicação real já encontrada (regra de três já cumprida ou capacidade nomeada explicitamente pelo responsável) — zero decisão arquitetural nova, zero Packet/Port/agregado novo:
+
+- **`SessaoDeJogo.jogadorVisivelMaisProximo(raio)`** (novo) — generalizado do método privado `ComandoUseEntity.jogadorVisivelMaisProximo`, simétrico a `EntidadesDoMundo.mobMaisProximo` (Milestone 36). `ComandoUseEntity` refatorado para reaproveitar.
+- **`MacroUtils.selecionarMelhorFerramenta(sessaoDeJogo, bloco)`** (novo) — extraído de `TarefaMineracao` (fiel a `AutoMiner.SelectBestTool`), capacidade "Seleção automática de ferramenta" nomeada explicitamente pelo responsável. `TarefaMineracao` refatorada para reaproveitar.
+- **`MacroUtils.selecionarSlotComItem(sessaoDeJogo, itemId)`** (novo) — generalizado de um trecho inline de `TarefaHerbalismo.replantar` (buscar item na hotbar antes de agir). `TarefaHerbalismo` refatorada para reaproveitar.
+- **`MacroUtils.itemNaMao`** — já existia (Milestone 37); nesta sessão ganhou o 3º e 4º consumidores (`TarefaMineracao`/`TarefaHerbalismo` tinham cada uma sua própria cópia idêntica, agora eliminadas).
+
+### Foundation APIs Já Existentes (confirmadas, reutilizadas sem alteração)
+
+`EntidadesDoMundo.mobMaisProximo` (M36), `interagirComEntidade`/`UseEntityPacket` (M34), `olharParaEntidade`/`olharParaBloco` (M13/28), `Mundo.tracarRaio` (DEC-24), `CalculadoraDeQuebraDeBloco` (DEC-28), `GuiaDeCaminho`/`criarCaminhoPara`/`BuscadorDeCaminho` (DEC-27/35), `MotorDeTick`/`TarefaContinua`/`Bot.registrarTarefa` (DEC-29/33), Container/`Janela`/`JanelaDeSlots` (DEC-37), `AbridorDeBau`/`clicarBlocoComBotaoDireito`/`clicarPlacaAgachando`/`contarSlotsVagos`/`slotUnificadoDoInventario` (Milestone 37), `usarItemNaMao`/`soltarItemEmUso` (M14/35), `RegistroDeBlocos`/`RegistroDePortais` (DEC-24/M29).
+
+### Domínios Completamente Fechados
+
+Blocos, Entidades (Categoria 2), Inventário, Containers (nível de primitiva — inclui Furnace/Brewing/Beacon/Anvil/Dispenser/Hopper), Placas (interação), Portais, Movimento (dentro do escopo decidido), Combate (Categoria 2), Itens (exceto NBT), Equipamentos (sem gap real), Mundo, Crafting (sem gap real), NPCs (sem gap real — sem trade de Villager no legado).
+
+### Domínios Parcialmente Fechados (exigem decisão arquitetural própria, fora desta sessão)
+
+Chat (parser de `ChatComponent`/JSON — lacuna desde M5 Incremento 3), Efeitos (auto-buff do próprio bot — lacuna desde DEC-28), Itens (NBT — lacuna desde M17/DEC-28), Movimento (MoveQueue/Movement-por-yaw — excluído por DEC-36, reabertura exigiria nova DEC).
+
+### Macros que passam a depender apenas de composição
+
+Com a matriz fechada, os candidatos remanescentes do Épico 4 e além tornam-se composição pura sobre Foundation APIs já prontas, sem infraestrutura nova: `Solk/CommandMobTeleport`, `CommandUseBow` (mira/carrega/solta contra alvo já identificado — `usarItemNaMao`+`soltarItemEmUso` já bastam), `CommandScript` (Fase 3, orquestra comandos já existentes). Nenhum foi implementado nesta sessão (fora de escopo — "não conectar macro").
+
+### Testes
+
+Nenhum teste novo dedicado (as 4 extrações são refatorações comportamentalmente idênticas, já cobertas pelas suítes existentes — `ComandoUseEntityTest`, `TarefaMineracaoTest`, `TarefaHerbalismoTest`, `TarefaAutoFishTest`/`TarefaMobTest`). Suíte completa validada sem nenhuma falha após as 4 refatorações.
+
+### Validação executada
+
+`mvn test` (JDK 21.0.9, Maven 3) — BUILD SUCCESS, **1051 testes executados, 0 falhas, 0 erros, 3 skipped** (mesma contagem da Milestone 37 — sessão 100% refatoração/extração, nenhum teste novo, nenhuma regressão).
+
+---
+
+## Milestone 39 — DEC-39: Fechamento dos Domínios Chat/NBT/Efeitos do Próprio Bot (Foundation APIs)
+
+Status
+
+CONCLUÍDA — 3 dos 4 domínios "parcialmente fechados" da Milestone 38 fechados como Foundation APIs. Movimento/MoveQueue permanece deliberadamente fora de escopo (DEC-36, já resolvida). Nenhuma macro implementada ou conectada.
+
+Objetivo
+
+Instrução explícita do responsável: continuar o pivô da Milestone 38, fechando os últimos domínios fundamentais restantes — Chat, NBT, Efeitos do próprio jogador (nessa prioridade) — como infraestrutura reutilizável, sem nenhum comportamento de negócio/wiring/macro.
+
+### Entregue
+
+- **NBT** (`domain.protocol.v1_8.TagNBT`, novo — sealed interface, 11 records aninhados, um por tipo de tag do protocolo 1.8) + **`NbtCodec`** (novo, package-private — leitor/escritor genérico, extraído 1:1 do switch que `ItemStackCodec` já usava só para *descartar* NBT desde a Milestone 10). `ItemStack` ganha 4º componente (`nbt`), **aditivo**: construtor secundário de 3 argumentos preserva 100% dos call sites existentes (`nbt=null`, comportamento idêntico ao anterior). `ItemStackCodec` decodifica/codifica a árvore de verdade.
+- **Efeitos do próprio bot**: `SessaoDeJogo` ganha `aplicarEfeito`/`removerEfeito`/`efeito`/`efeitosAtivos`, reaproveitando `EntidadeRemota.EfeitoAtivo` (sem duplicar o tipo). `ReceptorEntityEffect`/`ReceptorRemoveEntityEffect` roteiam para `SessaoDeJogo` quando `entityId` é o do próprio bot (antes: no-op silencioso, já que `EntidadesDoMundo` nunca contém o próprio bot) — mantém o roteamento já existente para entidades remotas intocado.
+- **Chat**: `domain.protocol.v1_8.ParserDeChatComponent` (novo) — extrai texto plano de um `ChatComponent` JSON (`text`+`extra` recursivo), parser JSON próprio e minimalista (RFC 8259) em vez de dependência externa nova (`jackson-databind` não é dependência real deste projeto). `translate`/`with` não resolvem a chave de tradução (fora de escopo, exigiria `en_us.lang` inteiro) — concatena só os argumentos. `SessaoDeJogo` ganha `textoPlanoDaUltimaMensagemDeChat()`.
+- **DEC-39** registrada em `01-Decisoes-Arquiteturais.md` — todas as 3 extensões são aditivas (nenhum contrato público quebrado; o único ponto de risco, `ItemStack`, é neutralizado pelo construtor de 3 args compatível), zero gatilho de parada acionado.
+
+### Domínios Fechados
+
+Chat (extração de texto plano — parser de tradução completo permanece fora, sem consumidor real), NBT (árvore genérica — leitura de regra de negócio como "tem encantamento X" é composição futura, não modelada aqui), Efeitos (próprio bot — resolução de bônus como `amplifierCeleridade`/DEC-28 é composição futura sobre `efeito(id)`, não modelada aqui).
+
+### Testes
+
+21 testes novos: `NbtCodecTest` (5 — raiz nula, escrita de TAG_END, round-trip dos 11 tipos aninhados, lista vazia, erro quando raiz não é compound), `ItemStackCodecTest` (+2, 1 teste renomeado para refletir NBT exposto em vez de descartado), `ParserDeChatComponentTest` (11 — vazio/nulo, componente simples, string JSON pura, `extra` recursivo, `translate`/`with`, escapes, campos de formatação ignorados, JSON inválido/truncado devolvido cru, array vazio/não-vazio no nível raiz), `SessaoDeJogoTest` (+3 — texto plano de chat, aplicar/consultar efeito próprio, remover efeito próprio), `ReceptorEntityEffectTest`/`ReceptorRemoveEntityEffectTest` (2 testes reescritos para refletir o novo roteamento para o próprio bot, antes documentavam o no-op).
+
+### Validação executada
+
+`mvn test` (JDK 21.0.9, Maven 3) — BUILD SUCCESS, **1072 testes executados, 0 falhas, 0 erros, 3 skipped** (mesmos 3 de sempre). 1051→1072 (+21), mudança 100% aditiva (nenhuma assinatura pública pré-existente removida ou alterada).
+
+---
+
+## Milestone 40 — EPIC-APP1: Primeira API Pública (REST + WebSocket) da Plataforma (DEC-40)
+
+Status
+
+CONCLUÍDA — camada `interfaces.rest`/`interfaces.websocket` completa sob `/api/v1`, construída inteiramente sobre Casos de Uso e `interfaces.comando` já aprovados. Nenhuma regra de negócio nova. Nenhum épico do roadmap de fechamento de domínios (seção abaixo) foi tocado ou reordenado — EPIC-APP1 é uma mudança de fase ortogonal, instruída explicitamente pelo responsável, que passa a rodar em paralelo/antes da continuidade desse roadmap.
+
+Objetivo
+
+Instrução explícita do responsável: mudar o foco de "portar funcionalidades" para "executar bots reais através da aplicação Java". Construir a primeira API pública da plataforma (REST + WebSocket, não React ainda) para que um frontend React futuro consiga controlar centenas de bots. Toda a camada construída sobre os Casos de Uso já existentes, sem lógica de negócio em Controllers. Legado C# deliberadamente não consultado nesta etapa (instrução explícita — não há comportamento de legado a preservar, o C# nunca teve API).
+
+### Entregue
+
+- **`application.registry.GerenciadorDeBots`** (novo, registry por `IdentificadorBot`) + **`CasoDeUsoRemoverBot`** (novo). `CasoDeUsoCriarBot` ganha `GerenciadorDeBots` no construtor (único ajuste de assinatura pré-existente desta milestone).
+- **4 Casos de Uso finos de transição de estado**: `CasoDeUsoIniciarBot`/`CasoDeUsoPararBot`/`CasoDeUsoPausarBot`/`CasoDeUsoRetomarBot`.
+- **`infrastructure.config.ConfiguracaoDeComandos`** (novo) — conecta pela primeira vez em produção o `GerenciadorDeComandos`/~38 `Comando*` aprovados desde a Milestone 12/DEC-23. **`infrastructure.config.ConfiguracaoDeCasosDeUso`** (novo) — expõe como bean os ~24 Casos de Uso de ação/inventário que já existiam mas nunca tinham sido instanciados fora de teste.
+- **`domain.bot.Conta`/`PerfilDeServidor`** (novos, records com identidade) + **`application.port.RepositorioDeContas`/`RepositorioDeServidores`** (portas novas) + adapters in-memory (`infrastructure.persistence`, antes vazio). `PoolDeProxies` ganha `adicionar`/`remover`/`listar`.
+- **`application.registry.NotificadorDeEventos`** (novo, pub/sub por bot + global) + dois hooks opcionais aditivos (`SaidaDoOperador.definirOuvinte`, `Bot.definirOuvinteDeEstado`) + **`interfaces.websocket.BotEventsWebSocketHandler`**/`WebSocketConfig` (WebSocket cru, sem STOMP — `/ws/bots/{id}/events`, `/ws/events`).
+- **`infrastructure.config.ApiKeyFilter`** (novo, header `X-API-Key`) — decisão deliberada de não introduzir Spring Security/OAuth nesta etapa (YAGNI).
+- **11 Controllers REST** (`interfaces.rest.v1`): `BotController` (criar/remover/iniciar/parar/pausar/retomar/conectar/desconectar/reconectar/listar/detalhar), `AcaoController` (mover/olhar/quebrar/colocar/interagir/usar-item/chat), `InventarioController`, `MundoController` (estado/bloco/entidades/jogadores), `MacroController`, `ComandoController`, `ContaController`, `ServidorController`, `ProxyController`, `LogController`, `MetricasController`. DTOs em `interfaces.rest.dto`, `GlobalExceptionHandler` (400/404/409/500), `PaginacaoSupport` (offset/limit), `BotLookup`, `RecursoNaoEncontradoException`.
+- **`pom.xml`**: `spring-boot-starter-web`, `spring-boot-starter-websocket`, `spring-boot-starter-validation`, `springdoc-openapi-starter-webmvc-ui` (Swagger UI em `/swagger-ui.html`). `application.yml` ganha `advancedbot.api.key`/`advancedbot.cors.allowed-origins`/`springdoc.*`.
+- **DEC-40** registrada em `01-Decisoes-Arquiteturais.md`.
+
+### Testes
+
+17 testes novos: `CasoDeUsoRemoverBotTest`, `CasoDeUsoIniciarBotTest`/`CasoDeUsoPararBotTest`/`CasoDeUsoPausarBotTest`/`CasoDeUsoRetomarBotTest`, `NotificadorDeEventosTest`, `GerenciadorDeBotsTest`, `PoolDeProxiesTest`(+1), `BotTest`(+1), `CasoDeUsoCriarBotTest`(+1). Nenhum teste de Controller HTTP automatizado nesta sessão (verificação end-to-end feita manualmente via `mvn spring-boot:run` real, ver abaixo) — candidato a próxima sessão se o projeto adotar `@WebMvcTest`/`MockMvc`.
+
+### Validação executada
+
+`mvn clean test` (JDK 21.0.9, Maven 3.9.7) — BUILD SUCCESS, **1089 testes executados, 0 falhas, 0 erros, 3 skipped** (mesmos 3 de sempre). 1072→1089 (+17). Validação manual end-to-end com `mvn spring-boot:run` real e `curl`/WebSocket (Node.js `WebSocket` nativo): `POST /api/v1/servidores` → `POST /api/v1/bots` (via `servidorId`) → `GET /api/v1/bots`/`GET /api/v1/bots/{id}` → `POST .../start` (204, estado muda para EXECUTANDO) → `GET /api/v1/metricas` reflete a contagem → `GET /api/v1/bots/{id}/logs` (vazio) → `GET /api/v1/bots/{id}/macros` (vazio) → `POST /api/v1/bots/{id}/macros/twerk` (200, `SUCESSO`, `TarefaTwerk` ativa) → `POST .../pause` (204) → `POST .../pause` de novo (409, `IllegalStateException` mapeada corretamente) → `DELETE /api/v1/bots/{id}` (204) → `GET /api/v1/bots/{id}` (404) → requisição sem `X-API-Key` (401). WebSocket: conectado em `/ws/events` antes de criar o bot, evento `{"tipo":"estado","payload":"EXECUTANDO",...}` recebido em tempo real ao chamar `/start`, confirmando o fluxo `Bot.iniciar()` → `NotificadorDeEventos` → `BotEventsWebSocketHandler` → client.
+
+### Limitações Conhecidas (documentadas na DEC-40, não bloqueiam a milestone)
+
+- Repositórios de Conta/Servidor/Proxy em memória (perdem estado a cada restart) — PostgreSQL (stack oficial) fica para milestone própria de persistência.
+- Autenticação por chave única, sem múltiplos usuários/papéis.
+- `EventoDeBot`/`IdentificadorBot` serializados por reflexão Jackson padrão (`{"value":"uuid"}`), sem customização de formato ainda.
+- CORS/`allowedOriginPatterns` liberados amplamente por padrão de desenvolvimento — revisar antes de qualquer deploy exposto.
+- Sem testes automatizados de Controller HTTP (`@WebMvcTest`/`MockMvc`/`@SpringBootTest` com `TestRestTemplate`) — só verificação manual nesta sessão.
+
+---
+
+**Nota de continuidade:** entre o encerramento desta seção (Milestone 40) e a Milestone 42 abaixo, a
+Milestone 41 (EPIC-APP2 — cobertura completa da API para as 12 telas do React) foi implementada e
+está registrada integralmente na **DEC-41** (`01-Decisoes-Arquiteturais.md`), mas esta seção não
+recebeu a subseção correspondente na sessão em que foi feita — lacuna do próprio processo de
+governança, não reaberta/reconstruída aqui (ver DEC-41 para o detalhamento completo: `BotResponse`
+enriquecido, `CatalogoController`/`ConfiguracaoController` novos, equipamento/janela expostos,
+auto-reconnect por bot, métricas de processo). Consulte a DEC-41 como fonte de verdade para o que
+foi entregue naquela sessão.
+
+## Milestone 42 — EPIC-FRONT-01: Persistência PostgreSQL, Testes de Integração REST, CORS (DEC-42)
+
+Status
+
+CONCLUÍDA — persistência in-memory de Conta/Servidor/Proxy substituída por PostgreSQL via JPA,
+primeiros testes de integração da camada REST do projeto, bug de CORS em `ApiKeyFilter` encontrado
+e corrigido. Ver **DEC-42** para o detalhamento completo (decisões, consequências, impacto por
+camada).
+
+Objetivo
+
+Instrução explícita do responsável: migração funcional C#→Java considerada concluída dentro do
+escopo aprovado; preparar o backend para consumo pelo React em produção — substituir persistência
+in-memory por PostgreSQL usando as portas já existentes, adapters JPA sem alterar o domínio,
+migrations, testes de integração REST, validar serialização/CORS/WebSocket, manter compatibilidade
+total da API, sem endpoints novos salvo indispensáveis à persistência. Legado C# deliberadamente
+não consultado (mesma justificativa da DEC-40/DEC-41 — persistência/infraestrutura de API não tem
+equivalente no C#).
+
+### Entregue
+
+- **Adapters JPA**: `RepositorioDeContasJpa`/`RepositorioDeServidoresJpa`/`RepositorioDeProxiesJpa`
+  (`infrastructure.persistence`) substituem os adapters in-memory (removidos) atrás das portas já
+  existentes `RepositorioDeContas`/`RepositorioDeServidores` e da porta nova `RepositorioDeProxies`
+  (`application.port`, mesmo padrão das irmãs — fecha a lacuna de `PoolDeProxies` nunca ter tido
+  persistência própria). 3 `@Entity`/`JpaRepository` novos em `infrastructure.persistence.jpa`; os
+  records de domínio continuam sem nenhuma anotação de framework.
+- **Schema Flyway**: `db/migration/V1__contas_servidores_proxies.sql` (tabelas `contas`/
+  `servidores`/`proxies`, `hibernate.ddl-auto=validate`). Tabela `proxies` sem `UNIQUE` — fiel ao
+  `PoolDeProxies` in-memory, que sempre aceitou duplicatas.
+- **`PoolDeProxies` com write-through**: carregado do `RepositorioDeProxies` no startup
+  (`ConfiguracaoDeExecucao`); `ProxyController` grava no repositório e no cache em memória a cada
+  `adicionar`/`remover`, nessa ordem.
+- **Credenciais via variável de ambiente** (`ADVANCEDBOT_DB_URL`/`_USER`/`_PASSWORD`, mesmo padrão
+  de `advancedbot.api.key`), default apontando para role/banco dedicados (`advancedbot`/
+  `advancedbot`@`localhost:5432/advancedbot`) criados nesta sessão num PostgreSQL 18 já instalado na
+  máquina.
+- **`EntityScan`/`EnableJpaRepositories` explícitos** em `AdvancedBotApplication` — achado técnico:
+  `AutoConfigurationPackages` (scanner de `@Entity`/`JpaRepository`) deriva do pacote da própria
+  classe `@SpringBootApplication`, não do `scanBasePackages` customizado; sem as anotações
+  explícitas o contexto Spring falhava ao subir.
+- **6 testes de integração REST novos** (`ContaControllerTest`/`ServidorControllerTest`/
+  `ProxyControllerTest`, primeiros testes de Controller HTTP do projeto — lacuna aberta desde a
+  DEC-40): `@SpringBootTest`+`MockMvc` contra PostgreSQL real dedicado a testes
+  (`advancedbot_test`), isolamento via `@Transactional` (rollback automático).
+- **Bug de CORS corrigido em `ApiKeyFilter`**: o filtro barrava toda requisição `OPTIONS`
+  (preflight) com 401 antes do CORS do Spring MVC rodar — preflight nunca carrega `X-API-Key` por
+  especificação do navegador, então isso quebrava CORS para qualquer requisição não-simples (quase
+  toda a API a partir de um browser). `shouldNotFilter` passa a excluir `OPTIONS`.
+
+### Testes
+
+1098→1104 testes automatizados (+6: `ContaControllerTest` 3, `ServidorControllerTest` 2,
+`ProxyControllerTest` 1), 0 falhas, 0 erros, 3 skipped deliberadamente.
+
+### Validação executada
+
+`mvn clean test` (JDK 21.0.9, Maven 3.9.7, contra `advancedbot_test`) — BUILD SUCCESS. Validação
+manual adicional com `mvn spring-boot:run` real contra o banco de desenvolvimento (`advancedbot`):
+Flyway migra o schema do zero no primeiro boot e confirma "up to date" (idempotência) num segundo
+boot; CRUD completo de conta/servidor/proxy via `curl` (criar/listar/remover, dados limpos ao
+final); preflight CORS testado antes e depois da correção do `ApiKeyFilter` (origem permitida → 200
+com `Access-Control-Allow-Origin`; origem não permitida → 403); WebSocket `/ws/events` conectado via
+cliente Node.js nativo durante a criação de um bot real.
+
+### Limitações Conhecidas
+
+- `advancedbot_test` precisa existir na mesma instância PostgreSQL local para os testes rodarem —
+  não é provisionado automaticamente (Docker/Testcontainers indisponíveis neste ambiente).
+- Flyway 9.22.3 (gerenciado pelo Spring Boot 3.2.5) loga aviso de versão não testada contra
+  PostgreSQL 18 (funcionou sem erro nesta sessão).
+
+---
+
+## Roadmap Definitivo Pós-Milestone 39 (Pivô de Estratégia: Épicos de Fechamento)
+
+Instrução explícita do responsável (sessão de 2026-07-25, após a Milestone 39): parar de escolher trabalho macro por macro ou domínio por domínio; usar todo o conhecimento já acumulado nesta sessão (sem nova auditoria do legado) para produzir a matriz final de domínios e um roadmap de poucos épicos grandes, cada um fechando um domínio inteiro. Levantamento do legado considerado encerrado a partir daqui — sessões futuras executam um épico deste roadmap sem redescoberta.
+
+### Matriz Final de Domínios
+
+| Domínio | Já existe | Falta | Generalizável | Macros que passam a reutilizar | Prioridade |
+|---|---|---|---|---|---|
+| **Foundation API (meta)** | `TarefaContinua`/`MotorDeTick`/`Bot.registrarTarefa`, `GerenciadorDeComandos`/`Comando`, `MacroUtils` (8 métodos), `AbridorDeBau` | — | — | todas | **CONCLUÍDO** |
+| **Mundo** | `Mundo`/`Bloco`/`tracarRaio`, `RegistroDeBlocos`, `RegistroDePortais`/`localizarPortal` | — | — | todas | **CONCLUÍDO** |
+| **Entidades/Combate (Cat. 2)** | `EntidadesDoMundo` (`porId`/`porUuid`/`mobMaisProximo`), `interagirComEntidade`/`UseEntityPacket`, `olharParaEntidade`, `jogadorVisivelMaisProximo` | — | — | Mob, UseBow, futuras | **CONCLUÍDO** (Categoria 1/KillAura permanece excluída por política, DEC-38 — não é gap) |
+| **Inventário** | `InventarioDoJogador`/`JanelaDeSlots`, `clicarSlot`/`shiftClique`/`trocarSlots`/`pegarItem`/`largarItem`/`moverItem`, `selecionarSlotDaHotbar`, `MacroUtils.selecionarSlotComItem`/`selecionarMelhorFerramenta`/`itemNaMao` | — | — | todas | **CONCLUÍDO** |
+| **Containers** (baú/fornalha/brewing/anvil/beacon/hopper/dispenser) | `Janela`/`JanelaDeSlots`, `abrirJanela`/`fecharJanela`/`confirmarTransacao`, `AbridorDeBau` | — | — | AutoFish, Mob, futuras | **CONCLUÍDO** (genérico por `tipo` string, DEC-37) |
+| **Itens/NBT** | `TagNBT`/`NbtCodec`, `ItemStack.nbt()` | leitura de regra específica (ex. "tem Flame?") é composição, não infra | — | futuras (composição) | **CONCLUÍDO** (infra) |
+| **Efeitos** | `SessaoDeJogo.aplicarEfeito`/`removerEfeito`/`efeito` (próprio bot), mirror em `EntidadeRemota` | resolver `amplifierCeleridade`/`amplifierFadiga` (DEC-28) é composição futura sobre `efeito(id)`, não infra nova | — | Mineração (bônus de haste), futuras | **CONCLUÍDO** (infra) |
+| **Chat** | `enviarMensagem`, `ultimaMensagemDeChat`, `ParserDeChatComponent`/`textoPlanoDaUltimaMensagemDeChat` | resolução de `translate` para texto de sistema (sem consumidor real) | — | futuras macros reativas a texto | **CONCLUÍDO** (infra; item sem consumidor fica de fora por design) |
+| **Movimento** | `mover`/`olhar`/`moverEOlhar`/`pular`/`aplicarFisica` (vertical+horizontal) | `MoveQueue`/`Movement`-por-yaw | não se aplica — **decisão já tomada (DEC-36), não reabrir** | `CommandMove`/`CommandRetard` permanecem bloqueados por política, não por lacuna | **FORA DE ESCOPO** (DEC-36) |
+| **Pathfinding** | `BuscadorDeCaminho`/`GuiaDeCaminho`/`criarCaminhoPara` | — | — | Goto, Follow, Portal, futuras | **CONCLUÍDO** |
+| **Equipamentos** | `EntidadeRemota.equipamento` (mirror de outros) | bot nunca veste armadura própria no legado — sem gap real | — | — | **CONCLUÍDO** (sem necessidade) |
+| **Economia/NPC** | `MacroUtils.clicarPlacaAgachando` (placa de compra/venda), Container genérico (cobriria trade real se algum dia usado) | Trade List (`0x30` CB, trade real de Villager) — **zero consumidor no legado** (só placas) | — | — | **CONCLUÍDO** (sem necessidade comprovada) |
+| **Interface com Servidor** | `enviarMensagem` (comandos de chat/teleporte), ciclo de vida (DEC-19/30/31/33) | — | — | Mob, AutoFish, MobTeleport | **CONCLUÍDO** |
+| **Scripting/Orquestração** | `GerenciadorDeComandos.executar` (dispatch externo por texto) | **um `Comando` não tem como invocar outro `Comando` registrado por alias/args programaticamente** (`CommandScript` do legado orquestra `$comando1; $comando2...`) | sim — é o único domínio com capacidade de composição genuinamente ausente | `CommandScript` (Fase 3); qualquer macro futura que precise compor comandos já registrados | **ÚNICO ÉPICO REAL REMANESCENTE** |
+
+**Permanentemente fora de escopo, não são gap de infraestrutura (decisão de política já tomada, não reabrir):** `CommandKillAura` (DEC-38, Categoria 1), `CommandInvCaptcha` (bypass de detecção de bot/CAPTCHA — recusa permanente, mesma categoria de política que KillAura, não uma lacuna técnica), `CommandGive`/`CommandProxy` (sem equivalente de domínio, DEC-23), `CommandMove`/`CommandRetard` (DEC-36).
+
+**Já implementadas integralmente, não voltam ao backlog:** AntiAFK, AutoFish/Pesca, AutoMiner, Herbalismo, Follow, Portal, Mob/Solk, Twerk, UseEntity, Goto, Reconectar, LimparChat, Ajuda, ListarJogadores, DropAll/LargarTudo, ClicarItemDaHotbar, todos os comandos de bloco/container/inventário.
+
+**Candidatos remanescentes que já são 100% composição hoje (sem nenhuma infraestrutura nova — só precisam da sessão "implemente a macro X"):** `Solk.CommandMobTeleport` (mesma família de `CommandMob`, mecânica específica a confirmar só no momento da implementação, não bloqueia o roadmap), `CommandUseBow` limitado a mirar/carregar/soltar contra alvo já identificado (`usarItemNaMao`+`soltarItemEmUso`+Categoria 2/DEC-38 já bastam).
+
+### Roadmap Definitivo (Épicos)
+
+**EPIC-I2 — Motor de Orquestração de Comandos (único épico de Foundation API remanescente).** Domínio: Scripting. Objetivo: permitir que um `Comando` (ou uma `TarefaContinua`) invoque outro `Comando` já registrado por alias+argumentos, fechando o pré-requisito de `CommandScript`. Escopo esperado (a refinar só na sessão de implementação, sem nova auditoria): expor `GerenciadorDeComandos` (ou uma abstração equivalente) como colaborador injetável de um novo `ComandoScript`, decidindo layering (`interfaces.comando` já depende de `GerenciadorDeComandos`? verificar na hora — primeiro ponto real de "Comando chama Comando", pode exigir uma DEC pequena e aditiva, mesmo padrão da DEC-21/23). Produz: capacidade reutilizável por qualquer automação futura que precise compor comandos já prontos, não só `CommandScript`.
+
+**Backlog de macros (pura composição, sem épico de infraestrutura — cada uma é uma sessão "implemente a macro X"):** `CommandMobTeleport`, `CommandUseBow`, e (após o EPIC-I2) `CommandScript`.
+
+**Conclusão do levantamento:** com o EPIC-I2, a plataforma atinge o estado objetivo — qualquer macro remanescente do legado (exceto as permanentemente fora de escopo por política/DEC já listadas acima) é composição pura de Foundation APIs já existentes. Nenhum outro domínio tem lacuna de infraestrutura real pendente.
+
+---
+
 # 6. Escopo Implementado
 
 Atualmente existem apenas componentes estruturais.
@@ -2998,12 +3336,14 @@ Implementado:
 - Domínio Inventory/Container — auditoria e fechamento (Milestone 33): `JanelaDeSlots.localizarTodosOsItens` (Item Search) e `SessaoDeJogo.limparCursor` (Inventory Utils) novos; 7 `Comando`s novos conectando Casos de Uso do Container Framework sem `Comando` correspondente; Equipment/Armadura confirmado sem lacuna funcional (legado nunca veste armadura). Zero DEC nova. 994 testes automatizados, 0 falhas, 0 erros, 3 skipped deliberadamente.
 - Domínio Interação com o Mundo — auditoria e fechamento (Milestone 34): `UseEntityPacket`/Codec (novo, PLAY `0x02` SERVERBOUND, porte de `PacketUseEntity`); `SessaoDeJogo.interagirComEntidade` novo; `CasoDeUsoOlharParaEntidade`/`CasoDeUsoInteragirComEntidade` novos; `interfaces.comando.ComandoUseEntity` (porte de `CommandUseEntity` — nick ou `@any`, atacar/interagir). Blocos/portas/alavancas/botões/placas/estruturas/uso-de-item confirmados 100% cobertos desde as Milestones 14/18/25/29/32 — nenhuma classe de porta/alavanca/botão/NPC tem precedente próprio no legado (tudo compõe sobre o clique genérico de bloco já portado). Zero DEC nova. 1007 testes automatizados, 0 falhas, 0 erros, 3 skipped deliberadamente.
 - Backlog "Composição Pura" em lote (Milestone 35): `SaidaDoOperador.limpar()`/`ComandoLimparChat`; `SessaoDeJogo.soltarItemEmUso` (status 5, sem consumidor); `TarefaLargarTudo`/`ComandoLargarTudo` (DropAll); `CasoDeUsoSelecionarSlotDaHotbar`/`ComandoClicarItemDaHotbar` (HotbarClick); `TarefaTwerk`/`ComandoTwerk`; `CasoDeUsoReconectarBot`/`ComandoReconectar` (Reco, sem suporte a `[IP:porta]` alternativo); `TarefaAutoFish`/`ComandoAutoFish` (Solk/CommandPesca/AutoFish, maior peça do lote — achado de fidelidade: `"$"` no legado é auto-invocação local de outro comando, não chat real). Zero DEC nova, zero Packet/Port/agregado/bounded context novo, zero interface pré-existente alterada. 1036 testes automatizados, 0 falhas, 0 erros, 3 skipped deliberadamente.
+- Foundation APIs — Milestones 36-39 (ver DEC-38/DEC-39): fecham Container/Combate-Categoria-2/Chat/NBT/Efeitos-do-próprio-bot como capacidades reutilizáveis. **EPIC-APP1 — Primeira API Pública REST+WebSocket (Milestone 40, DEC-40)** e **EPIC-APP2 — Cobertura completa da API para o React (Milestone 41, DEC-41)**: ~13 Controllers REST sob `/api/v1`, WebSocket cru (`/ws/bots/{id}/events`, `/ws/events`), `ApiKeyFilter`, CORS, Swagger UI — ver DEC-40/DEC-41 para o detalhamento completo (as linhas "Serviços"/"APIs REST" abaixo, em "Não implementado", estão desatualizadas desde a Milestone 40; mantidas aqui só por não ter sido objeto desta sessão revisar o restante da lista).
+- **EPIC-FRONT-01 — Persistência PostgreSQL/Testes de Integração REST/CORS (Milestone 42, DEC-42):** adapters JPA (`RepositorioDeContasJpa`/`RepositorioDeServidoresJpa`/`RepositorioDeProxiesJpa`) substituem os in-memory atrás das portas `RepositorioDeContas`/`RepositorioDeServidores` e da porta nova `RepositorioDeProxies`; migration Flyway (`contas`/`servidores`/`proxies`); `PoolDeProxies` com write-through; 6 testes de integração REST novos (primeiros do projeto); bug de CORS corrigido em `ApiKeyFilter` (preflight `OPTIONS` barrado por engano). Zero DEC de protocolo/domínio reaberta, zero contrato de API alterado. 1104 testes automatizados, 0 falhas, 0 erros, 3 skipped deliberadamente.
 
 Não implementado:
 
-- Serviços
-- Repositórios
-- APIs REST
+- Serviços (parcialmente desatualizado — ver EPIC-APP1/EPIC-APP2/EPIC-FRONT-01 acima)
+- ~~Repositórios~~ Conta/Servidor/Proxy persistidos via JPA/PostgreSQL desde a Milestone 42 (EPIC-FRONT-01); persistência de Bot/`GerenciadorDeBots` continua em memória (fora do escopo pedido nesta sessão)
+- APIs REST (desatualizado — ver EPIC-APP1/EPIC-APP2 acima, Milestones 40-41)
 - Scheduler distribuído (multi-nó/multi-JVM) — o scheduler single-JVM em processo já existe desde a Milestone 21 (`AgendadorDeTarefasPort`/`MotorDeTick`), sem nenhuma tarefa real registrada ainda
 - Rede/Protocolo Minecraft (criptografia AES/RSA real e autenticação Mojang para servidores em modo online, Session Server, Status State)
 - Demais pacotes do estado PLAY (Entity Metadata `0x1C` — coberto apenas pelo descarte seguro da DEC-20, sem semântica exposta —, combate, XP/Experience — sem precedente no C# auditado, mesmo tratamento de Time Update/Spawn Position); bounded context de Mundo (Milestone 7) **encerrado oficialmente na Milestone 18** — Chunk Data, Block Change, Multi Block Change, Map Chunk Bulk, Explosion, Change Game State e Update Sign implementados; Time Update (`0x03`), Spawn Position (`0x05`), World Border (`0x44`), Update Block Entity (`0x35`), Block Action (`0x24`) e Block Break Animation (`0x25`) avaliados e confirmados sem nenhum precedente no C# legado — cobertos com fidelidade pelo descarte seguro da DEC-20 (ver Incrementos 7.5 e 18.1). Player List/tab list e Chat Enviado pelo Bot **implementados** — ver Milestone 8. Movimentação (Player Position `0x04`) e rotação (Player Look `0x05`) do jogador **implementadas** — ver Milestone 9. Swing Arm (`0x0A`), Player Digging (`0x07`) e Player Block Placement (`0x08`) **implementados** — ver Milestone 10; mineração automática, física de quebra e "usar item na mão" (sentinela -1/-1/-1, Codec já suporta) continuam fora de escopo. Combinação posição+rotação iniciada pelo bot **implementada** — ver Milestone 11 (reaproveita `ConfirmacaoDePosicaoPacket`, DEC-22); Tick loop/motor de física automático continua fora de escopo. Entity Action `0x0B` serverbound **implementado para o subconjunto sneak** (`actionId` 0/1) — ver Milestone 20; leave bed/jump boost são código morto comprovado no legado, sprint e `Player` bare `0x03` só têm call site dentro do Tick loop de física (mesmo motivo de exclusão da DEC-22).
@@ -3080,6 +3420,18 @@ Exemplo:
 
 Nome
 
+**Atualização mais recente (Milestone 42, sessão 2026-07-27): EPIC-FRONT-01 — Persistência
+PostgreSQL/Testes de Integração REST/CORS — CONCLUÍDA.** Mudança de fase declarada pelo responsável:
+migração funcional C#→Java considerada concluída dentro do escopo aprovado, Java passa a ser a
+única fonte de verdade, prioridade agora é evolução do produto (não mais auditoria do legado). Ver
+subseção "Milestone 42" (Seção 5) e **DEC-42** para o detalhamento completo. Próximo passo: escolha
+do responsável entre continuar o roadmap de épicos de fechamento (EPIC-I2, ver abaixo) ou abrir a
+próxima fase de evolução de produto (ex.: persistência de bots/GerenciadorDeBots, autenticação
+multi-usuário, ou o frontend React em si).
+
+Atualização anterior (Milestone 41, EPIC-APP2 — ver nota de continuidade acima da Seção "Roadmap
+Definitivo" e **DEC-41**).
+
 **Estratégia de trabalho mudou (2026-07-23): a unidade de trabalho não é mais milestone/épico por sessão, é o domínio da plataforma** (ver "Pivô de Estratégia: Unidade de Trabalho passa a ser o Domínio", início da Milestone 33). Nenhuma milestone obrigatória em aberto — Milestones 5 a 30 concluídas (Milestone 22 encerrada com o Incremento 22.7, wiring de produção/DI; Milestone 23 — DEC-32, primeira Macro real, AntiAFK; Milestone 24 — DEC-33, abertura da Fase 2/Macros, wiring de produção do ciclo de vida do bot ao `MotorDeTick`; Milestone 25 — Herbalismo, segunda Macro real, e DEC-34, correção de fidelidade de altura de olho; Milestone 26 — DEC-35, reabertura parcial da DEC-22 para motor de física horizontal mínimo + `GuiaDeCaminho`, execução de caminho; Milestones 27-29 — Épico Fase 2 "execução de caminho": `ComandoGoto`, `TarefaFollow`/`ComandoFollow` e `ComandoPortal`; Milestone 30 — DEC-36, Épico "Mineração", `TarefaMineracao`/`ComandoMinerar`). Milestone 31 (Sistema de Pesca/AutoFish) foi BLOQUEADA por depender de um agregado novo (`Janela`/Container) — o mesmo achado motivou um **pivô de estratégia** do responsável do projeto: em vez de continuar portando macro por macro, a Fase 2 passa a construir primeiro um roadmap de épicos de infraestrutura reutilizável (EPIC-I1 a EPIC-I13, ver "Pivô de Estratégia da Fase 2" acima da Milestone 32). **Milestone 32 — EPIC-I1 (Container Framework, DEC-37) CONCLUÍDA**, desbloqueando formalmente a Milestone 31. **Milestone 33 — Domínio Inventory/Container (auditoria + fechamento) CONCLUÍDA**: confirma Container/Item Transfer 100% cobertos, fecha Item Search/Inventory Utils, confirma Equipment sem lacuna funcional real (legado nunca veste armadura). **Milestone 34 — Domínio Interação com o Mundo (auditoria + fechamento) CONCLUÍDA**: confirma blocos/portas/alavancas/botões/placas/estruturas/uso-de-item 100% cobertos desde as Milestones 14/18/25/29/32 (nenhuma classe de porta/alavanca/botão/NPC tem precedente próprio no legado — tudo já compõe sobre o clique genérico de bloco); fecha a única lacuna real, interação/ataque manual a entidades (`UseEntityPacket`/`ComandoUseEntity`, porte de `CommandUseEntity`). **Pivô de estratégia (mesma sessão da Milestone 34, 2026-07-23): unidade de trabalho passa de "domínio auditado por sessão" para "backlog global auditado uma única vez"** — produzido um artifact externo (não commitado em `docs-reescrita`) com a matriz completa de todo o legado `Projeto Adv 2.4.5`, classificando cada macro/capacidade em 5 Épicos (ver memória `project_backlog_definitivo`). **Milestone 35 — Backlog "Composição Pura" em lote CONCLUÍDA**: todo item do Épico 1 (zero capacidade nova) e Épico 2 (retoque trivial de 1 método) implementado numa única sessão sem pausa entre itens, incluindo a macro AutoFish que motivou o bloqueio original da Milestone 31. Próximo passo: Épicos 3 (dado de altura por mob, precisa levantamento no legado), 4 (decisão de política de combate — Solk/CommandMob e UseBow) e 5 (motor de scripting, Fase 3) — nenhum atende aos critérios "zero DEC/decisão/mudança arquitetural" da Milestone 35, todos aguardam o responsável.
 
 Histórico (Milestones 5 a 22, todas concluídas — mantido por rastreabilidade)
@@ -3135,7 +3487,35 @@ Fora de escopo por política do projeto (não candidatos): combate/automação (
 
 Resumo da próxima atividade que deverá ser executada pela IA.
 
-**Atualização mais recente (Milestone 35, sessão 2026-07-23): Backlog "Composição Pura" em lote — CONCLUÍDA.** Terceira mudança de estratégia do responsável no mesmo dia: em vez de auditar domínio por domínio (Milestones 33-34), produzir um artifact único com o backlog GLOBAL de todo o legado `Projeto Adv 2.4.5` (matriz macro-por-macro + catálogo de capacidades + 5 Épicos, ver memória `project_backlog_definitivo` — não commitado em `docs-reescrita` por instrução explícita), e então implementar TUDO que se enquadra em "zero DEC nova, zero decisão do responsável, zero mudança arquitetural, infraestrutura já pronta" (Épicos 1 e 2) numa única sessão contínua, sem tratar cada item como milestone/macro isolada. Entregue: `SaidaDoOperador.limpar()`/`ComandoLimparChat` (ClearChat); `SessaoDeJogo.soltarItemEmUso` (Player Digging status 5, sem consumidor de produção ainda); `TarefaLargarTudo`/`ComandoLargarTudo` (DropAll, laço pautado sobre `largarItem`/M32); `CasoDeUsoSelecionarSlotDaHotbar` (novo)/`ComandoClicarItemDaHotbar` (HotbarClick); `TarefaTwerk`/`ComandoTwerk`; `CasoDeUsoReconectarBot` (novo)/`ComandoReconectar` (Reco, sem `[IP:porta]` alternativo); e a peça maior, **`TarefaAutoFish`/`ComandoAutoFish`** (Solk/CommandPesca, "solkpesca" — a macro AutoFish que motivara o bloqueio original da Milestone 31, hoje pura composição sobre Container/M32 + Interação com o Mundo/M34). Achado de fidelidade não documentado antes: `MinecraftClient.SendMessage` do legado intercepta qualquer mensagem começada com `"$"` e a roteia como auto-invocação LOCAL de outro `ICommand` (`CmdManager.RunCommand`), nunca como chat real — isso muda a leitura de `"$move j 40"` (usado em quase toda transição de estado das macros Solk) de "comando de chat" para "chamada local a `CommandMove`", que por sua vez depende do mecanismo `MoveQueue`/`Movement` por yaw (DEC-36, não portado). Substituído por `pular()+aplicarFisica()` (mesma composição de `TarefaAntiAFK`/DEC-32). Duas divergências de fidelidade documentadas diretamente no código de `TarefaAutoFish` (não nesta seção, para não duplicar): `deveGuardarItem` sentinela `false` (depende de NBT de item, lacuna já registrada desde a Milestone 17/DEC-28) e o fallback "sem baú com espaço" simplificado (só o primeiro candidato é tentado, sem o `MoveQueue` do legado). Zero DEC nova em todo o lote, zero Packet/Port/agregado/bounded context novo, zero interface pré-existente alterada. 1007→1036 testes automatizados (+29), 0 falhas, 0 erros, 3 skipped deliberadamente. **Backlog de composição pura esgotado** — só restam os Épicos 3 (dado de altura por mob, precisa levantamento no legado), 4 (decisão de política de combate, Solk/CommandMob e o resto de UseBow) e 5 (motor de scripting, Fase 3 greenfield), nenhum dos quais atende aos critérios desta sessão. Próximo passo: decisão do responsável sobre qual Épico (3, 4 ou 5) atacar em seguida.
+**Atualização mais recente (Milestone 42, sessão 2026-07-27): EPIC-FRONT-01 — CONCLUÍDA.** Sessão
+marcou virada de fase: migração funcional C#→Java considerada concluída dentro do escopo aprovado;
+a partir de agora, não auditar o legado C# salvo pedido explícito ou bug específico que exija
+comparação, e priorizar evolução do produto. Escopo pedido: substituir persistência in-memory de
+Conta/Servidor/Proxy por PostgreSQL usando as portas já existentes (`RepositorioDeContas`/
+`RepositorioDeServidores`) mais uma porta nova só onde não havia (`RepositorioDeProxies`, fechando a
+lacuna de `PoolDeProxies` nunca ter tido persistência), adapters JPA sem alterar o domínio,
+migrations Flyway, testes de integração REST (primeiros do projeto), validação de
+serialização/CORS/WebSocket, sem novos endpoints além do indispensável. Entregue: 3 entidades
+JPA + 3 `JpaRepository` + 3 adapters (`infrastructure.persistence`/`.jpa`), migration
+`V1__contas_servidores_proxies.sql`, `RepositorioDeProxies` (porta nova) com write-through em
+`ProxyController`/`PoolDeProxies`, `EntityScan`/`EnableJpaRepositories` explícitos em
+`AdvancedBotApplication` (achado técnico: `AutoConfigurationPackages` não segue `scanBasePackages`
+customizado), 6 testes de integração REST novos (`ContaControllerTest`/`ServidorControllerTest`/
+`ProxyControllerTest`, contra PostgreSQL real dedicado a testes via `@Transactional`), e correção de
+um bug de CORS em `ApiKeyFilter` (preflight `OPTIONS` era barrado com 401 antes do CORS do Spring
+MVC rodar, quebrando toda requisição não-simples a partir de um browser). Zero DEC de
+protocolo/domínio reaberta, zero contrato de API existente alterado (só o meio de persistência por
+trás mudou) — ver **DEC-42** para o detalhamento completo. 1098→1104 testes automatizados (+6), 0
+falhas, 0 erros, 3 skipped deliberadamente; validação manual adicional via `mvn spring-boot:run`
+real contra PostgreSQL de desenvolvimento (Flyway migra e depois confirma idempotência; CRUD via
+`curl`; preflight CORS confirmado corrigido; WebSocket `/ws/events` conectado via Node.js nativo).
+**Próximo passo: decisão do responsável** entre continuar o roadmap de épicos de fechamento
+(EPIC-I2 — Motor de Orquestração de Comandos, único épico de Foundation API remanescente, ver
+"Roadmap Definitivo Pós-Milestone 39" acima) ou abrir uma nova frente de evolução de produto agora
+que o backend está pronto para produção (persistência de bots/`GerenciadorDeBots`, autenticação
+multi-usuário, o próprio frontend React).
+
+Atualização anterior (Milestone 35, sessão 2026-07-23): Backlog "Composição Pura" em lote — CONCLUÍDA.** Terceira mudança de estratégia do responsável no mesmo dia: em vez de auditar domínio por domínio (Milestones 33-34), produzir um artifact único com o backlog GLOBAL de todo o legado `Projeto Adv 2.4.5` (matriz macro-por-macro + catálogo de capacidades + 5 Épicos, ver memória `project_backlog_definitivo` — não commitado em `docs-reescrita` por instrução explícita), e então implementar TUDO que se enquadra em "zero DEC nova, zero decisão do responsável, zero mudança arquitetural, infraestrutura já pronta" (Épicos 1 e 2) numa única sessão contínua, sem tratar cada item como milestone/macro isolada. Entregue: `SaidaDoOperador.limpar()`/`ComandoLimparChat` (ClearChat); `SessaoDeJogo.soltarItemEmUso` (Player Digging status 5, sem consumidor de produção ainda); `TarefaLargarTudo`/`ComandoLargarTudo` (DropAll, laço pautado sobre `largarItem`/M32); `CasoDeUsoSelecionarSlotDaHotbar` (novo)/`ComandoClicarItemDaHotbar` (HotbarClick); `TarefaTwerk`/`ComandoTwerk`; `CasoDeUsoReconectarBot` (novo)/`ComandoReconectar` (Reco, sem `[IP:porta]` alternativo); e a peça maior, **`TarefaAutoFish`/`ComandoAutoFish`** (Solk/CommandPesca, "solkpesca" — a macro AutoFish que motivara o bloqueio original da Milestone 31, hoje pura composição sobre Container/M32 + Interação com o Mundo/M34). Achado de fidelidade não documentado antes: `MinecraftClient.SendMessage` do legado intercepta qualquer mensagem começada com `"$"` e a roteia como auto-invocação LOCAL de outro `ICommand` (`CmdManager.RunCommand`), nunca como chat real — isso muda a leitura de `"$move j 40"` (usado em quase toda transição de estado das macros Solk) de "comando de chat" para "chamada local a `CommandMove`", que por sua vez depende do mecanismo `MoveQueue`/`Movement` por yaw (DEC-36, não portado). Substituído por `pular()+aplicarFisica()` (mesma composição de `TarefaAntiAFK`/DEC-32). Duas divergências de fidelidade documentadas diretamente no código de `TarefaAutoFish` (não nesta seção, para não duplicar): `deveGuardarItem` sentinela `false` (depende de NBT de item, lacuna já registrada desde a Milestone 17/DEC-28) e o fallback "sem baú com espaço" simplificado (só o primeiro candidato é tentado, sem o `MoveQueue` do legado). Zero DEC nova em todo o lote, zero Packet/Port/agregado/bounded context novo, zero interface pré-existente alterada. 1007→1036 testes automatizados (+29), 0 falhas, 0 erros, 3 skipped deliberadamente. **Backlog de composição pura esgotado** — só restam os Épicos 3 (dado de altura por mob, precisa levantamento no legado), 4 (decisão de política de combate, Solk/CommandMob e o resto de UseBow) e 5 (motor de scripting, Fase 3 greenfield), nenhum dos quais atende aos critérios desta sessão. Próximo passo: decisão do responsável sobre qual Épico (3, 4 ou 5) atacar em seguida.
 
 Atualização anterior (Milestone 34, sessão 2026-07-23): Domínio Interação com o Mundo — auditoria + fechamento — CONCLUÍDA.** Segunda sessão sob a estratégia "unidade de trabalho = domínio" (ver Milestone 33). Escopo pedido: auditar toda interação genérica do bot com o mundo (blocos, portas/alavancas/botões, placas, NPCs, entidades, uso de item, uso de item em bloco, estruturas), classificar em já implementado/parcial/ausente, implementar só primitivas reutilizáveis (nunca macro), extrair API só quando 3+ consumidores no legado a usam. Auditoria confirmou blocos (clicar/quebrar/colocar com auto-mira, Milestone 14), estruturas (portal, Milestone 29) e uso de item/uso de item em bloco (`usarItemNaMao`/Milestone 14) 100% cobertos. Achado central: **portas/alavancas/botões/NPCs (trade) não têm nenhum precedente próprio no legado** — busca exaustiva em `AdvancedBot.Client.Commands/*.cs` não encontra nenhuma classe dedicada; toda interação desse tipo no legado (`MacroUtils.RightclickBlock`/`openChest`, usada por placas de compra/venda) é só right-click genérico de bloco, já coberto desde a Milestone 14 — não implementado por ausência de regra a preservar (CLAUDE.md proíbe inventar regra sem precedente), não por lacuna real. Escrita de placa (Update Sign SERVERBOUND) também sem nenhum call site no legado — não implementada. Única lacuna real encontrada e fechada: **`PacketUseEntity`/`CommandUseEntity.cs`** (interagir ou atacar uma entidade uma única vez) nunca tinha sido portado — novo `UseEntityPacket`/`UseEntityCodec` (PLAY `0x02` SERVERBOUND), `SessaoDeJogo.interagirComEntidade`, `CasoDeUsoOlharParaEntidade` (faltava o wrapper para `olharParaEntidade`, que já existia desde a Milestone 28 só com consumidor direto em `TarefaFollow`), `CasoDeUsoInteragirComEntidade`, `interfaces.comando.ComandoUseEntity` (porte fiel de `CommandUseEntity` — nick ou `@any`/sem argumento para o mais próximo visível, modo atacar/interagir com a mesma inversão de índice do legado). Omissão documentada: o filtro `IsBot` do legado (exclui outros bots do mesmo processo da busca `@any`) não tem equivalente — não existe registro de múltiplas instâncias de `Bot` no domínio Java, mesma categoria da omissão do toggle `"retard"` em `ComandoFollow` (Milestone 28). Macros avaliadas só como consumidoras, não implementadas: `CommandUseBow`/`CommandKillAura` (combate, fora de escopo por política), `CommandTwerk`/`CommandRetard`/`CommandInvCaptcha`/`CommandReco` (compõem sobre primitivas já existentes ou pertencem a outro domínio). Zero DEC nova (crescimento aditivo, mesmo padrão da DEC-19/DEC-21). 994→1007 testes automatizados (+13), 0 falhas, 0 erros, 3 skipped deliberadamente. **Domínio Interação com o Mundo esgotado** — qualquer macro futura que interaja com bloco/entidade/estrutura (AutoFish/M31, um eventual porte não-combativo, uma futura automação de trade) é pura composição, sem infraestrutura nova. Próximo passo: escolha do responsável do próximo domínio a esgotar (AutoFish/M31 agora duplamente desbloqueada — Container + Interação com o Mundo — é a candidata mais óbvia).
 
@@ -3226,6 +3606,13 @@ Histórico (Milestones 5 a 29 concluídas — ver Seção 5 (subseções por mil
 | 2026-07-23 | Milestone 33 (Domínio Inventory/Container, auditoria + fechamento): confirmado Container+Item Transfer 100% cobertos desde a Milestone 32/DEC-37 (nada a reimplementar); JanelaDeSlots.localizarTodosOsItens novo (Item Search, porte de CommandMob.buscarSlotsCom); SessaoDeJogo.limparCursor novo (Inventory Utils, porte generalizado de CommandMob.limparCursor); 7 Comandos novos (ShiftClique/TrocarSlots/PegarItem/LargarItem/MoverItem/ConfirmarTransacao/LimparCursor) conectando Casos de Uso já aprovados desde a Milestone 32 sem Comando correspondente. Equipment/Armadura analisado e confirmado sem lacuna funcional real — legado nunca veste armadura em nenhuma macro, construir auto-equipe seria regra de negócio sem validação (candidato dependente de decisão do responsável, não bloqueio). Zero DEC nova, zero Packet/Port/agregado/bounded context novo. 994 testes automatizados (963→994, +31), 0 falhas, 0 erros, 3 skipped deliberadamente. Domínio Inventory/Container esgotado | ✔ |
 | 2026-07-23 | Milestone 34 (Domínio Interação com o Mundo, auditoria + fechamento): confirmado blocos (clicar/quebrar/colocar, Milestone 14), estruturas (portal, Milestone 29) e uso de item/uso de item em bloco (Milestone 14) 100% cobertos; confirmado que portas/alavancas/botões/NPCs não têm nenhum precedente próprio no legado (interação física genérica já coberta pelo clique de bloco), escrita de placa sem call site no legado — nenhum dos dois implementado, por ausência de regra a preservar. UseEntityPacket/UseEntityCodec novo (PLAY 0x02 SERVERBOUND, porte de PacketUseEntity); SessaoDeJogo.interagirComEntidade novo; CasoDeUsoOlharParaEntidade (faltava o wrapper, olharParaEntidade já existia desde a Milestone 28)/CasoDeUsoInteragirComEntidade novos; ComandoUseEntity novo (porte de CommandUseEntity — nick ou @any, atacar/interagir, filtro IsBot do legado não portado por ausência de registro de múltiplas instâncias de Bot). Zero DEC nova, zero Packet/Port/agregado/bounded context novo. 1007 testes automatizados (994→1007, +13), 0 falhas, 0 erros, 3 skipped deliberadamente. Domínio Interação com o Mundo esgotado | ✔ |
 | 2026-07-23 | Milestone 35 (Backlog "Composição Pura" em lote): pivô de estratégia para backlog-global-auditado-uma-vez (artifact com 5 Épicos). Implementado todo Épico 1+2 numa sessão contínua sem pausa entre itens: ComandoLimparChat/SaidaDoOperador.limpar; SessaoDeJogo.soltarItemEmUso (status 5, sem consumidor); TarefaLargarTudo/ComandoLargarTudo (DropAll); CasoDeUsoSelecionarSlotDaHotbar/ComandoClicarItemDaHotbar (HotbarClick); TarefaTwerk/ComandoTwerk; CasoDeUsoReconectarBot/ComandoReconectar (Reco); TarefaAutoFish/ComandoAutoFish (Solk/CommandPesca, desbloqueia a Milestone 31). Achado: "$" no legado é auto-invocação local de outro comando, não chat real - "$move j 40" substituído por pular()+aplicarFisica() (DEC-32). deveGuardarItem sentinela false (NBT ausente, lacuna já registrada desde DEC-28); fallback de baú sem espaço simplificado (só 1º candidato, sem MoveQueue). Zero DEC nova, zero Packet/Port/agregado/bounded context novo, zero interface pré-existente alterada. 1036 testes automatizados (1007→1036, +29), 0 falhas, 0 erros, 3 skipped deliberadamente. Backlog de composição pura esgotado - restam só os Épicos 3/4/5, todos dependentes de dado/decisão/DEC do responsável | ✔ |
+| 2026-07-25 | Milestone 36 (DEC-38, Épico 4 — política de combate): reabre parcialmente a DEC-23 (mesmo padrão da DEC-32/DEC-35 sobre a DEC-22, nenhum texto da DEC-23 alterado). Formaliza Categoria 1 (automação de combate genérica — KillAura/Aura, ataque automático indiscriminado, PvP automático, ataque através de parede — permanece fora de escopo, sem exceção) separada da Categoria 2 (ataque a entidade específica já identificada, como etapa de uma automação de negócio maior — passa a candidata, aprovação individual macro por macro), fundamentada no precedente já em produção desde a Milestone 34 (UseEntityPacket/interagirComEntidade/ComandoUseEntity, tratados como interação com o mundo, não combate). Único gap de infraestrutura genérica fechado: EntidadesDoMundo.mobMaisProximo(x,y,z,raio) (novo — primitiva pura, mesma categoria de Mundo.tracarRaio/DEC-24, sem checagem de linha de visão, fiel ao CanSeeEntity desativado no legado). Solk/CommandMob/CommandMobTeleport/CommandPesca/CommandUseBow continuam não implementados, aguardando aprovação individual antes de qualquer código de macro. Zero Packet/Port/agregado/bounded context novo, zero interface pré-existente alterada. 1041 testes automatizados (1036→1041, +5), 0 falhas, 0 erros, 3 skipped deliberadamente | ✔ |
+| 2026-07-25 | Milestone 37 (Solk/CommandMob, Categoria 2/DEC-38): TarefaMob/ComandoMob (aliases solkmob/mob) - porte de Solk/CommandMob.cs, 12 sub-estados, 100% composição sobre capacidades já aprovadas (mobMaisProximo/M36, interagirComEntidade/M34, Container/DEC-37, pular+aplicarFisica). Duas capacidades genéricas extraídas de TarefaAutoFish (regra de três, reaproveitadas pelas duas macros): MacroUtils (clicarBlocoComBotaoDireito/clicarPlacaAgachando/contarSlotsVagos/slotUnificadoDoInventario/itemNaMao) e AbridorDeBau (retentativa de abrir baú). Divergências documentadas: FileLock multi-conta sem equivalente (DEC-09), VERIFICAR_POCAO inalcançável com config default, filtro Flame por NBT (lacuna já registrada DEC-28), limpeza de espadas extras sem retentativa real (mesma simplificação DEC-37), $move j N vira pular+aplicarFisica, interrupções reativas a chat não portadas (parser ChatComponent, lacuna M5), 850 hits distribuídos em ataques gated a 100ms (não bloqueante). Zero DEC nova, zero Packet/Port/agregado/bounded context novo, zero interface pré-existente alterada. Candidatos remanescentes do Épico 4: CommandMobTeleport, CommandUseBow (mira em alvo já identificado). 1051 testes automatizados (1041→1051, +10), 0 falhas, 0 erros, 3 skipped deliberadamente | ✔ |
+| 2026-07-25 | Milestone 38 (Pivô: unidade de trabalho = Capacidade Fundamental/Foundation API): matriz de 16 domínios funcionais levantada sem nova auditoria macro por macro. Achado central - projeto já quase inteiramente fechado a nível de primitiva (Container Framework/DEC-37 cobre Furnace/Brewing/Beacon/Anvil/Dispenser/Hopper genericamente; Blocos/Entidades-Cat.2/Inventário/Portais/Mundo/Combate-Cat.2 fechados). 4 Foundation APIs novas por extração de duplicação real: SessaoDeJogo.jogadorVisivelMaisProximo (generalizado de ComandoUseEntity, simétrico a mobMaisProximo/M36), MacroUtils.selecionarMelhorFerramenta (extraído de TarefaMineracao, fiel a AutoMiner.SelectBestTool), MacroUtils.selecionarSlotComItem (generalizado de TarefaHerbalismo), MacroUtils.itemNaMao ganha 3º/4º consumidor (TarefaMineracao/TarefaHerbalismo refatoradas). Domínios parcialmente fechados, exigem decisão própria fora desta sessão: Chat (parser ChatComponent/JSON, lacuna M5), Efeitos (auto-buff do bot, lacuna DEC-28), Itens (NBT, lacuna DEC-28), Movimento (MoveQueue, DEC-36). Zero DEC nova, zero macro implementada/conectada, zero Packet/Port/agregado novo. 1051 testes automatizados (mesma contagem de M37 - sessão de refatoração/extração, 0 falhas, 0 erros, 3 skipped) | ✔ |
+| 2026-07-25 | Milestone 39 (DEC-39, fecha Chat/NBT/Efeitos do próprio bot): TagNBT/NbtCodec novos (11 tipos de tag, extraído do descarte já existente em ItemStackCodec desde M10); ItemStack ganha nbt (4º componente, aditivo - construtor de 3 args preservado, nbt=null). SessaoDeJogo ganha aplicarEfeito/removerEfeito/efeito/efeitosAtivos (reaproveita EntidadeRemota.EfeitoAtivo); ReceptorEntityEffect/ReceptorRemoveEntityEffect roteiam para o próprio bot quando entityId bate (antes: no-op silencioso). ParserDeChatComponent novo (extração de texto plano de ChatComponent JSON, parser próprio - jackson não é dependência real do projeto); SessaoDeJogo.textoPlanoDaUltimaMensagemDeChat novo. translate/with não resolvem texto de tradução (fora de escopo). Movimento/MoveQueue deliberadamente não tocado (DEC-36 já resolvida). Zero macro implementada/conectada, zero Packet/Port/agregado novo, zero interface pré-existente quebrada (extensões 100% aditivas). 1072 testes automatizados (1051→1072, +21), 0 falhas, 0 erros, 3 skipped deliberadamente | ✔ |
+| 2026-07-25 | Milestone 40 (EPIC-APP1, DEC-40, encerramento): mudança de fase — de "portar funcionalidades" para "executar bots reais através da aplicação Java". Primeira camada web do projeto (`interfaces.rest`/`interfaces.websocket`), REST + WebSocket sob `/api/v1`, construída inteiramente sobre Casos de Uso e a camada `interfaces.comando` (DEC-23) já aprovados, sem regra de negócio nova; legado C# deliberadamente não consultado nesta etapa (instrução explícita, sem precedente de API no legado). `application.registry.GerenciadorDeBots` (novo, registry por id, lacuna que nenhuma peça anterior cobria) + `CasoDeUsoRemoverBot`/`CasoDeUsoIniciarBot`/`CasoDeUsoPararBot`/`CasoDeUsoPausarBot`/`CasoDeUsoRetomarBot` (novos, cascas finas sobre `Bot`); `CasoDeUsoCriarBot` ganha `GerenciadorDeBots` no construtor (único ajuste de assinatura pré-existente). `ConfiguracaoDeComandos` conecta pela primeira vez em produção o `GerenciadorDeComandos`/~38 `Comando*` aprovados desde a Milestone 12/DEC-23 (nunca antes instanciados fora de teste) — macros expostas via `POST/DELETE /bots/{id}/macros/{alias}` sem nenhuma lógica de macro nova. `Conta`/`PerfilDeServidor` (novos, records com identidade) + `RepositorioDeContas`/`RepositorioDeServidores` (portas novas, adapters in-memory — PostgreSQL/DEC oficial do `CLAUDE.md` deliberadamente fora de escopo); `PoolDeProxies` ganha `adicionar`/`remover`/`listar`. `application.registry.NotificadorDeEventos` (novo, pub/sub por bot + global) alimentado por dois hooks opcionais aditivos (`SaidaDoOperador.definirOuvinte`/`Bot.definirOuvinteDeEstado`), consumido por `BotEventsWebSocketHandler` (WebSocket cru, sem STOMP, `/ws/bots/{id}/events` e `/ws/events`). Autenticação por `X-API-Key` (`ApiKeyFilter`) — decisão deliberada de não introduzir Spring Security/OAuth (YAGNI, sem consumidor externo real ainda). 11 Controllers REST (Bot/Ação/Inventário/Mundo/Macro/Comando/Conta/Servidor/Proxy/Log/Métricas), DTOs em `interfaces.rest.dto`, `GlobalExceptionHandler` (400/404/409/500 padronizados), paginação offset/limit. Validado end-to-end via `mvn spring-boot:run` real (criar servidor/conta → bot → iniciar → macro → evento WebSocket em tempo real → métricas → pausar → 409 → remover → 404 → 401 sem chave). Zero DEC anterior reaberta/contradita. 1089 testes automatizados (1072→1089, +17), 0 falhas, 0 erros, 3 skipped deliberadamente | ✔ |
+| 2026-07-25 | Milestone 41 (EPIC-APP2, DEC-41, encerramento): cobertura completa da API para as 12 telas do React mapeadas pelo responsável, sobre a base do EPIC-APP1/DEC-40. `BotResponse` enriquecido (proxy/macrosAtivas/posição/vida/autoReconnect/msDesdeUltimoKeepAlive numa única chamada de lista). Equipamento (`InventarioDoJogador` ganha 5 getters nomeados de armadura/mão) e Container/Janela (`SessaoDeJogo.janelaAtual()`/DEC-37, nunca antes exposta) via `InventarioController`. `EstadoMundoResponse` ganha `chunkAtual`; `/mundo/entidades` ganha filtro `?tipo=mob|jogador`. Catálogos globais novos `GET /commands`/`GET /macros` (reaproveitam metadado de `GerenciadorDeComandos.comandos()`, sem duplicar). `PUT /bots/{id}/proxy` expõe `Bot.trocarProxy` (existia desde a Milestone 22, sem caminho de produção); `PUT /bots/{id}/auto-reconnect` exigiu 2 métodos aditivos novos (`SessaoBot.comAutoReconnect`/`Bot.definirAutoReconnect` — antes não havia nenhuma forma alcançável de ligar reconexão automática por bot); `GET /configuracao/reconnect-policy` só-leitura sobre o bean `PoliticaDeReconexaoComJitter` (tipo de retorno do bean mudado de interface para concreto). `MetricasResponse` ganha `porEstadoDeSessao`/`memoria`/`uptimeMs`/`cpuLoad` (via `java.lang.management`, sem Actuator) e `motorDeTick` (instrumentação nova em `MotorDeTick`, aditiva, sem alterar lógica de tick). `ComandoController`/`MacroController` publicam evento `"comando"` via `NotificadorDeEventos` já existente. **4 limitações documentadas como decisão consciente, não implementadas**: bioma (descartado no decode desde a Milestone 7, exigiria reabrir codec de protocolo), NPCs (protocolo 1.8 não distingue NPC de mob/player), ping real/RTT (nunca medido pelo client — exposto como `msDesdeUltimoKeepAlive`, nome honesto, não fabricado), separação chat/erro/comando no console (`SaidaDoOperador` é buffer único por design, DEC-26 — retag exigiria dezenas de call sites). Zero DEC anterior reaberta/contradita (protocolo/domínio intocados). 1098 testes automatizados (1089→1098, +9), 0 falhas, 0 erros, 3 skipped deliberadamente; validação adicional end-to-end via `mvn spring-boot:run` real + WebSocket (Node.js nativo) | ✔ |
+| 2026-07-27 | Milestone 42 (EPIC-FRONT-01, DEC-42, encerramento): mudança de fase declarada pelo responsável — migração funcional C#→Java concluída dentro do escopo aprovado, Java é a única fonte de verdade, sem novas auditorias do legado salvo pedido explícito/bug específico. Preparação do backend para produção: `RepositorioDeContasJpa`/`RepositorioDeServidoresJpa`/`RepositorioDeProxiesJpa` (`infrastructure.persistence`) substituem os adapters in-memory (removidos) atrás das portas `RepositorioDeContas`/`RepositorioDeServidores` já existentes e da porta nova `RepositorioDeProxies` (mesmo padrão, fecha a lacuna de `PoolDeProxies` nunca ter tido persistência própria — `PoolDeProxies` continua como cache em memória usado por `GerenciadorDeReconexao`, carregado do repositório no startup, escrito em write-through por `ProxyController`). 3 `@Entity`/`JpaRepository` novos (`infrastructure.persistence.jpa`), domínio sem nenhuma anotação de framework. Schema via Flyway (`db/migration/V1__contas_servidores_proxies.sql`, `hibernate.ddl-auto=validate`); tabela `proxies` deliberadamente sem `UNIQUE` (fiel ao `PoolDeProxies` in-memory, que sempre aceitou duplicatas). Credenciais via variável de ambiente (mesmo padrão de `advancedbot.api.key`), role/banco dedicados criados num PostgreSQL 18 já instalado na máquina. Achado técnico: `EntityScan`/`EnableJpaRepositories` precisaram ser explícitos em `AdvancedBotApplication` — `AutoConfigurationPackages` não segue `scanBasePackages` customizado. 6 testes de integração REST novos (`ContaControllerTest`/`ServidorControllerTest`/`ProxyControllerTest`, primeiros testes de Controller HTTP do projeto — lacuna aberta desde a DEC-40), `@SpringBootTest`+`MockMvc` contra PostgreSQL real dedicado a testes (`advancedbot_test`), isolamento via `@Transactional`. Bug de CORS encontrado e corrigido em `ApiKeyFilter`: preflight `OPTIONS` era barrado com 401 antes do CORS do Spring MVC rodar (preflight nunca carrega `X-API-Key` por spec do navegador), quebrando CORS para qualquer requisição não-simples a partir de um browser. Zero DEC de protocolo/domínio reaberta, zero contrato de API existente alterado. 1098→1104 testes automatizados (+6), 0 falhas, 0 erros, 3 skipped deliberadamente; validação manual adicional via `mvn spring-boot:run` real contra PostgreSQL de desenvolvimento (Flyway migra e depois confirma idempotência; CRUD via `curl`; preflight CORS confirmado corrigido; WebSocket `/ws/events` conectado via Node.js nativo) | ✔ |
 
 ---
 
