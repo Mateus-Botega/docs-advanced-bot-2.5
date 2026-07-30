@@ -3231,6 +3231,536 @@ cliente Node.js nativo durante a criação de um bot real.
 
 ---
 
+## Milestone Frontend 01 — EPIC-FRONT-01 (Frontend): Fundação do projeto React
+
+> **Nota de nomenclatura:** o rótulo `EPIC-FRONT-01` já havia sido usado na Milestone 42 (acima)
+> para o trabalho de persistência/CORS do **backend**, feito em preparação para esta fase. Esta
+> milestone usa o mesmo rótulo de épico (definido assim pelo responsável do projeto na sessão de
+> arquitetura de frontend, ver `docs-reescrita/docs/12-Interface/06-Plano-Construcao-Frontend.md`),
+> mas se refere a um trabalho distinto — a fundação do **frontend React**. A partir daqui,
+> "EPIC-FRONT-01" sem qualificação se refere a esta milestone (frontend); a Milestone 42 continua
+> sendo a referência para o EPIC-FRONT-01 de backend/persistência.
+
+Status
+
+CONCLUÍDA — projeto React criado em `advancedbot-frontend/` (raiz do repositório, irmão de
+`advancedbot-java/`), com toda a infraestrutura definida em
+`docs-reescrita/docs/12-Interface/06-Plano-Construcao-Frontend.md` (arquitetura congelada em sessão
+anterior) e `07-Matriz-Frontend-Backend.md`. Nenhuma tela de negócio implementada — escopo
+explicitamente restrito à fundação.
+
+Objetivo
+
+Instrução explícita do responsável: com a arquitetura do frontend já congelada (nenhuma decisão em
+aberto), implementar integralmente o EPIC-FRONT-01 — toda a fundação necessária para que os épicos
+seguintes implementem apenas funcionalidades (Dashboard, Bots, Proxy, etc., nenhuma delas nesta
+sessão). Considerar exclusivamente as 3 fontes já congeladas (backend Java, Governança, Documentação
+de Interface); legado C# não consultado.
+
+### Entregue
+
+- **Projeto Vite + React 19 + TypeScript**, em `advancedbot-frontend/`, com aliases de path
+  (`@`, `@app`, `@shared`, `@features`) espelhados entre `vite.config.ts` e `tsconfig.app.json`.
+- **Tailwind CSS v4** (`@tailwindcss/vite`) com tema claro/escuro por classe `.dark` no `<html>`
+  (`@custom-variant dark`), tokens de cor como CSS variables (`--color-*`) com override completo em
+  `.dark`, aplicados via `ThemeProvider` a partir de um slice Zustand persistido (`light`/`dark`/
+  `system`, com listener de `prefers-color-scheme` apenas no modo `system`).
+- **React Router v7** (data router, `createBrowserRouter`), rota raiz `AppShell` com `<Outlet />`;
+  rota de fundação (`FoundationPage`) e rota 404 (`NotFoundPage`). Rotas de feature entram por
+  EPIC-FRONT futuro.
+- **TanStack Query** (`QueryClient` único em `shared/lib/queryClient.ts`) com `QueryCache`/
+  `MutationCache.onError` centralizados — toda falha de query/mutation vira `AppError` tipado e
+  vira Toast automaticamente, sem boilerplate por feature.
+- **Zustand**: `uiStore` (tema, colapso da sidebar, bot selecionado — persistido parcialmente em
+  `localStorage`) e `toastStore` (fila de notificações).
+- **Axios** (`shared/api/httpClient.ts`): instância única com interceptor de request injetando
+  `X-API-Key` e interceptor de response normalizando o `ErrorResponse` do `GlobalExceptionHandler`
+  do backend em `AppError{status, errorCode, message, path, isNetworkError}`.
+- **mitt** (`shared/api/wsClient.ts`): Event Bus (`wsBus`) com eventos `message`/`status`; classe
+  `ManagedSocket` com reconexão automática por backoff exponencial (1s→30s); `connectGlobalEventsSocket`
+  (`/ws/events`, singleton, conectado durante toda a sessão via `RealtimeProvider`) e
+  `connectBotEventsSocket(botId)` (`/ws/bots/{id}/events`, sob demanda, para hooks de domínio
+  futuros). Parser único do envelope `EventoDeBot`, incluindo o formato `{"value": uuid}` de
+  `IdentificadorBot` (DEC-40) — nenhum outro ponto do código faz esse parsing.
+- **Orval integrado ao OpenAPI real do backend**: `orval.config.ts` aponta para `/v3/api-docs`
+  (springdoc, já presente no `pom.xml` do backend) e gera clientes Axios + hooks TanStack Query em
+  `shared/api/generated/{endpoints,models}` usando `httpClient` como mutator. Executado com sucesso
+  contra o backend real rodando localmente: **13 controllers, 57 paths, 71 arquivos gerados**
+  (endpoints + models). Script `npm run generate:api`. Nenhum DTO de REST escrito à mão a partir de
+  agora — só tipos de WebSocket (`shared/types/ws.ts`, fora do OpenAPI) e view-models de UI continuam
+  manuais.
+- **Design System base** (`shared/components`): atômicos `Button` (variantes primary/secondary/
+  danger/ghost/icon, estado loading com `Spinner`), `Input`, `NumberInput` (com clamp de min/max),
+  `SearchBox` (com debounce), `Card`, `Badge`, `Tooltip`, `Spinner`/`OverlaySpinner`, `Skeleton`/
+  `SkeletonLines`, `ThemeToggle`; moleculares `Modal` (portal, Escape para fechar, foco em
+  `role="dialog"`), `ConfirmDialog` (variante Danger obrigatória para ações destrutivas),
+  `DataTable` genérico (paginação, ordenação, virtualização própria sem dependência externa acima de
+  200 linhas, estados loading/error/empty via `Skeleton`/`ErrorState`/`EmptyState`); feedback
+  `Toast`/`ToastContainer`, `EmptyState`, `ErrorState`, `ErrorBoundary` (classe React, captura falhas
+  de renderização fora do ciclo do TanStack Query); layout `Sidebar` (genérico, recebe `items` por
+  propriedade — sem regra de negócio), `TopBar`, `Workspace`, `AppShell`, `PageContainer`,
+  `PageHeader`.
+- **Hooks genéricos não-domínio**: `useDebouncedValue`, `usePagination`.
+- **ESLint** (flat config, `typescript-eslint` + `eslint-plugin-react-hooks` +
+  `eslint-plugin-react-refresh` + `eslint-config-prettier`) e **Prettier** configurados; scripts
+  `lint`, `format`, `format:check`, `typecheck`, `test`, `test:watch`, `test:ui`, `generate:api`.
+- **Vitest + React Testing Library + MSW**: `src/test/setup.ts` (jest-dom, cleanup, ciclo de vida do
+  servidor MSW) e `src/test/server.ts` (`setupServer()` sem handlers por padrão — cada feature futura
+  registra os seus via `server.use(...)`).
+
+### Testes
+
+19 testes automatizados (Vitest), 0 falhas: `cn` (3), `parseBotId`/`normalizeEventoDeBot` (2),
+`Button` (3), `uiStore` (3), `toastStore` (2), `describeAppError` (5), suíte de setup MSW validada
+via `beforeAll/afterEach/afterAll`.
+
+### Validação executada
+
+`npx tsc -b --noEmit` sem erros; `npx eslint .` sem erros/avisos; `npx prettier --check .` sem
+divergências; `npx vitest run` — 6 arquivos de teste, 19 testes, 0 falhas; `npm run build`
+(`tsc -b && vite build`) — sucesso, bundle único (~373 KB / ~120 KB gzip, sem code-splitting de
+feature ainda pois não há rotas além da fundação). Validação manual adicional: backend Java subido
+localmente (`mvn spring-boot:run`, JDK 21, PostgreSQL 18 já em execução na máquina) para gerar o
+OpenAPI real consumido pelo Orval; frontend rodado via `npm run dev` (porta 5173, conforme CORS
+default do backend) e inspecionado no navegador — `AppShell` renderiza, tema dark aplicado por
+padrão (preferência do sistema), toggle de tema e colapso de sidebar funcionam, canal WebSocket
+global conectado sem erros no console, nenhum erro de runtime.
+
+### Limitações Conhecidas
+
+- `npm audit` reporta uma vulnerabilidade alta em `react-router`/`react-router-dom`
+  (GHSA-qwww-vcr4-c8h2) presente em toda a série publicada 7.12.0-8.2.0, incluindo a versão instalada
+  (7.18.1) — o advisory cobre exclusivamente o modo RSC/framework (server actions), não exercido por
+  esta SPA (modo biblioteca puro, sem SSR). Documentado em `06-Plano-Construcao-Frontend.md`,
+  decisão travada #5.
+- Nenhuma feature de produto implementada (fora de escopo desta milestone, por instrução explícita).
+- `features/` ainda não populada — cada EPIC-FRONT seguinte cria sua própria subpasta conforme
+  `07-Matriz-Frontend-Backend.md`.
+
+---
+
+## Milestone Frontend 02 — EPIC-FRONT-02: Feature Dashboard
+
+Status
+
+CONCLUÍDA — primeira feature funcional do frontend. `features/dashboard/` completa
+(components/hooks/services/pages/tests), consumindo exclusivamente hooks gerados pelo Orval,
+validada contra o backend Java real (métricas reais, criação/start de bot refletido na tela sem
+F5). Dashboard virou a rota raiz (`/`), substituindo a `FoundationPage` (removida — deixaria de ser
+usada e de ser código morto).
+
+Objetivo
+
+Instrução explícita do responsável: com a fundação (EPIC-FRONT-01) já validada, implementar
+integralmente o EPIC-FRONT-02 — a feature Dashboard completa, sem interrupção por etapas,
+consumindo exclusivamente hooks/DTOs gerados pelo Orval, nunca chamada Axios manual dentro da
+feature. Fontes oficiais: os dois documentos de arquitetura do frontend, backend Java, OpenAPI do
+SpringDoc, hooks/DTOs do Orval — legado C# fora de escopo.
+
+### Achado técnico antes da implementação (bloqueio real, resolvido nesta sessão)
+
+Ao consumir o primeiro hook gerado de verdade (`useMetricas`), a tela não teria funcionado: o
+`orval.config.ts` da Milestone Frontend 01 tinha `override.query: { useQuery: true, useMutation:
+true, signal: true }`. Com os dois booleanos simultâneos, o Orval 8.23 inverte a geração — todo
+endpoint `GET` (`metricas`, `listar`/`listar1`/`listar2` de contas/servidores/proxies) foi gerado
+como `useMutation`, e todo `POST`/`PUT`/`DELETE` como `useQuery`. Esse defeito não tinha aparecido
+na Milestone Frontend 01 porque nenhuma tela de negócio consumia os hooks gerados ainda. Corrigido
+para `{ signal: true }` (deixa o Orval decidir pelo verbo HTTP, comportamento padrão e correto);
+`shared/api/generated` regenerado contra o backend real após a correção — confirmado que `GET`
+virou `useQuery` e `POST`/`PUT`/`DELETE` viraram `useMutation` em todos os 13 controllers. Corrigido
+o gerador, nunca os arquivos gerados (continuam nunca editados à mão). Nenhuma decisão arquitetural
+mudou — Orval continua sendo a ferramenta decidida; era um bug de configuração, não uma escolha.
+
+### Entregue
+
+- **`features/dashboard/services/formatters.ts`**: funções puras de formatação (CPU, memória,
+  uptime, TPS, duração de tick, contagem) — nenhuma chamada HTTP.
+- **`features/dashboard/services/deriveMetrics.ts`**: derivação pura de breakdown por estado de
+  execução/sessão a partir de `MetricasResponse`, com rótulos em português para os estados
+  conhecidos e fallback para a chave crua em estados desconhecidos (não assume que só existem os 3
+  valores hoje observados).
+- **`features/dashboard/hooks/useDashboardMetrics`**: wrap de `useMetricas` (gerado) com
+  `refetchInterval` de 5s (fallback de polling, decisão travada #16/#17 — CPU/memória/tick não têm
+  evento WS dedicado) e invalidação imediata da query ao receber `tipo: "estado"` no canal
+  `/ws/events` (via `wsBus`).
+- **`features/dashboard/hooks/useDashboardTotals`**: wrap de `useListar2`/`useListar`/`useListar1`
+  (contas/servidores/proxies, todos gerados) com `staleTime` de 5 minutos (grupo "estático" da
+  decisão travada #16 — nenhuma das três tem evento WS).
+- **`features/dashboard/hooks/useMetricsHistory`**: acumula em memória (máx. 30 amostras) os
+  valores reais de CPU/TPS a cada atualização da query de métricas, para alimentar os gráficos de
+  tendência — não existe endpoint de série histórica no backend, então o gráfico é a tendência
+  recente observada pelo próprio cliente, nunca dado inventado ou interpolado.
+- **Componentes**: `MetricCard` (12 instâncias na tela), `StateBreakdownCard` (barra de distribuição
+  por estado, CSS puro), `MetricTrendChart` (sparkline SVG de CPU/TPS, sem lib de gráfico nova),
+  `DashboardGapNotice` (registro visível na própria tela dos 3 GAPs abaixo).
+- **`DashboardPage`**: loading (skeleton de página inteira), error (`ErrorState` com retry),
+  conteúdo com 12 `MetricCard`, 2 `StateBreakdownCard`, 2 `MetricTrendChart`, `DashboardGapNotice`.
+  Grid responsivo (1/2/4 colunas conforme breakpoint), tema claro/escuro herdado do `ThemeProvider`
+  já existente.
+- **GAPs registrados (não simulados)**: Threads da JVM (não exposto por `MetricasController`);
+  Proxy em uso (sem campo de associação a bot em `ProxyResponse`, só total cadastrado);
+  Heap vs. memória não-heap (backend só expõe heap via `Runtime` — "Memória JVM" e "Heap" pedidos
+  como métricas separadas colapsam num único card real).
+- **Router/Sidebar**: `DashboardPage` é agora a rota `index` (`/`); `FoundationPage` removida
+  (código morto após a substituição); `AppShell` ganha item de navegação "Dashboard".
+
+### Testes
+
+44 testes automatizados (19→44, +25 desta milestone), 0 falhas: `formatters` (13), `deriveMetrics`
+(6), `MetricCard` (2), `DashboardPage` (3 — caminho feliz com dados reais mockados via MSW,
+`ErrorState` em falha de rede, `EmptyState` na distribuição quando não há bots).
+
+### Validação executada
+
+`npx tsc -b --noEmit` sem erros; `npx eslint .` sem erros/avisos; `npx prettier --check .` sem
+divergências; `npx vitest run` — 10 arquivos de teste, 44 testes, 0 falhas; `npm run build` sucesso.
+Validação manual contra o backend Java real (`mvn spring-boot:run`, JDK 21, PostgreSQL 18 local): (1)
+Dashboard vazio — cards zerados, `EmptyState` na distribuição, gráficos em "coletando amostras",
+CPU/memória/uptime reais da JVM; (2) criado servidor/conta/bot reais via `curl` e chamado
+`POST /bots/{id}/start` — a tela atualizou sozinha (sem F5): "Bots totais" 0→1, "Bots executando"
+→1, distribuição por estado passou a mostrar "Executando: 1"/"Desconectado: 1", confirmando a
+invalidação por evento WS `"estado"`; (3) dados de teste removidos do banco de desenvolvimento ao
+final; (4) tema escuro alternado manualmente (classe `.dark` aplicada corretamente); (5) viewport
+375px (mobile) sem overflow horizontal (`scrollWidth === clientWidth`); (6) console do navegador
+sem erros em nenhum dos passos.
+
+### Limitações Conhecidas
+
+- Totais de Contas/Servidores/Proxies só atualizam por `staleTime` (5 min) ou remontagem da página
+  — decisão consciente (nenhum dos três endpoints tem evento WS), não bug.
+- `"Bots conectados"/"executando"/"pausados"/"desconectados"` mostram "—" (não "0") quando o backend
+  retorna o mapa de estado sem aquela chave presente (nenhum bot naquele estado) — distinção
+  deliberada entre "valor zero" e "chave ausente", não simula um zero que o backend não afirmou.
+
+---
+
+## Milestone Frontend 03 — EPIC-FRONT-03: Feature Proxy
+
+Status
+
+CONCLUÍDA — segunda feature funcional do frontend. `features/proxy/` completa
+(components/hooks/services/pages/tests): listagem, busca e paginação client-side, criação, edição
+e exclusão com confirmação. Pronta para uso em produção. Validada contra o backend Java já em
+execução (IntelliJ, não iniciado por esta sessão).
+
+Objetivo
+
+Instrução explícita do responsável: com a arquitetura já congelada e a fundação/Dashboard já
+validados, implementar integralmente o EPIC-FRONT-03 — a feature Proxy completa, usando
+exclusivamente hooks gerados pelo Orval, sem Axios manual, sem DTO manual, sem endpoint novo,
+reaproveitando o Design System da Fase 0. Backend já rodava localmente (IntelliJ) durante todo o
+desenvolvimento.
+
+### Entregue
+
+- **`shared/components/atoms/Select.tsx`** (novo): único componente novo do Design System nesta
+  sessão — já especificado em `03-Design-System.md` §2 desde a Fase 0, implementado agora porque o
+  campo `tipo` do formulário de Proxy (enum fechado `HTTP`/`SOCKS4`/`SOCKS5`, `TipoDeProxy.java`)
+  precisava de um select de verdade. Completa o catálogo já congelado, não é uma decisão nova.
+- **`features/proxy/services/proxyValidation.ts`**: validação pura (host obrigatório, porta
+  1-65535, tipo dentre os 3 valores reais do enum do backend) — sem chamada HTTP.
+- **`features/proxy/services/filterProxies.ts`**: busca e paginação client-side puras — o backend
+  não tem parâmetro de busca nem paginação em `GET /api/v1/proxies` (retorna array cru).
+- **`features/proxy/hooks/useProxyList`**: wrap de `useListar1` (gerado), `staleTime` 5min (grupo
+  estático, sem WS).
+- **`features/proxy/hooks/useProxyTableState`**: estado de UI local (busca + página), não pertence
+  ao servidor.
+- **`features/proxy/hooks/useProxyMutations`**: `useCreateProxy`/`useDeleteProxy` (wrap de
+  `useAdicionar`/`useRemover1` gerados + invalidação de `getListar1QueryKey()` + toast de sucesso);
+  `useUpdateProxy` (mutation composta client-side chamando as funções geradas `remover1` e
+  `adicionar` em sequência — ver limitação de backend abaixo).
+- **Componentes**: `ProxyTable` (especialização de `DataTable`, sem coluna de latência — GAP já
+  conhecido), `ProxyFormModal` (único modal para criar/editar, reaproveita `Modal`/`ConfirmDialog`
+  do Design System).
+- **`ProxyPage`**: `PageHeader` com ação "Nova proxy", `SearchBox`, `ProxyTable` com paginação,
+  `ProxyFormModal`, `ConfirmDialog` de exclusão. Loading/error/empty tratados pelo `DataTable`
+  (reuso, sem duplicar lógica).
+- **Rota `/proxy`** lazy-loaded (`React.lazy`/`Suspense`, decisão travada #5 — primeira rota da
+  aplicação a usar code-splitting de fato); item "Proxy" adicionado à `Sidebar`.
+- **Correção incidental no tratamento global de erros** (`shared/lib/queryClient.ts`): o
+  `MutationCache.onError` global só sabia formatar `AppError` (vindo do `httpClient`); qualquer
+  outro `Error` (como o lançado por `useUpdateProxy` quando a remoção funciona mas a criação falha)
+  virava um toast genérico "Erro inesperado", perdendo a mensagem específica. Corrigido para
+  preservar `error.message` quando não for `AppError` — melhoria genérica que beneficia qualquer
+  mutation composta futura, não só Proxy.
+
+### Achado técnico (limitação real do backend, documentada ao final conforme instrução)
+
+`ProxyController.java` não tem `PUT` — comentário no próprio código confirma que é deliberado:
+proxy não tem identidade própria por entrada, host+port+tipo já formam chave natural suficiente
+para o CRUD original (criar/listar/remover). "Editar" no frontend é composto client-side (remover a
+entrada original + adicionar a nova), usando as mesmas funções geradas pelo Orval — nenhum endpoint
+novo foi criado. Duas consequências documentadas na UI/matriz: (1) se a remoção for bem-sucedida e a
+criação falhar, a proxy original já foi perdida — `useUpdateProxy` lança um erro com mensagem
+específica avisando o operador a recadastrar manualmente, em vez de um erro genérico; (2) o backend
+permite duplicatas exatas (sem `UNIQUE`) e `remover()` remove só a primeira ocorrência
+(`CopyOnWriteArrayList.remove`/`findFirst()`) — com proxies duplicadas na lista, editar/excluir uma
+linha específica pode afetar a outra ocorrência idêntica, não necessariamente a linha clicada. Não é
+um bug do frontend: é uma limitação de identidade do modelo de dados do backend, herdada
+integralmente pela UI.
+
+### Testes
+
+64 testes automatizados (44→64, +20 desta milestone), 0 falhas: `proxyValidation` (4),
+`filterProxies` (6), `ProxyFormModal` (3), `ProxyTable` (2), `ProxyPage` (5 — listagem, empty state,
+error state com retry, criação end-to-end via MSW, exclusão com confirmação end-to-end via MSW).
+
+### Validação executada
+
+`npx tsc -b --noEmit` sem erros; `npx eslint .` sem erros (1 aviso pré-existente de
+`react-refresh/only-export-components` em `router.tsx`, não bloqueia build); `npx prettier --check .`
+sem divergências; `npx vitest run` — 15 arquivos de teste, 64 testes, 0 falhas; `npm run build`
+sucesso, `ProxyPage` confirmado como chunk separado (`ProxyPage-*.js`, ~15 KB/~5 KB gzip),
+confirmando o code-splitting por rota. Validação manual contra o backend Java já em execução
+(IntelliJ, JDK 21, PostgreSQL 18 local, não iniciado por esta sessão): (1) lista vazia — `EmptyState`
+correto; (2) criada proxy real via UI (`198.51.100.10:1080 SOCKS5`) — apareceu na tabela e
+confirmada via `curl` direto no backend; (3) editada a mesma proxy (porta 1080→1081) via UI — `curl`
+confirmou uma única entrada atualizada, sem duplicata (remover+adicionar funcionou corretamente);
+(4) excluída via `ConfirmDialog` — tabela voltou ao `EmptyState`, `curl` confirmou lista vazia no
+backend; (5) viewport mobile (375px) sem overflow horizontal; (6) console do navegador sem erros em
+nenhum passo (um erro de HMR "`RouteFallback is not defined`" observado durante a sessão era
+resíduo de um refactor local de nomes ainda em andamento — não presente no código final; reiniciar o
+servidor de desenvolvimento e recarregar a página confirmou console limpo).
+
+### Limitações Conhecidas
+
+- Sem `PUT /api/v1/proxies` no backend — "editar" é uma composição client-side de dois endpoints
+  reais (ver achado técnico acima), não uma limitação de frontend.
+- Duplicatas exatas de proxy (mesmo host+port+tipo) são indistinguíveis na tabela e editar/excluir
+  uma delas pode afetar a outra ocorrência — herdado do modelo de dados do backend (sem `UNIQUE`),
+  não introduzido pelo frontend.
+- Sem coluna de latência/ping na `ProxyTable` — `POST /api/v1/proxies/check` não existe (GAP já
+  registrado desde a análise inicial de arquitetura).
+
+---
+
+## Milestone Frontend 05 — EPIC-FRONT-05: Feature Bots
+
+Status
+
+CONCLUÍDA — núcleo da Fase 2 do roadmap (`06-Plano-Construcao-Frontend.md`). `features/bots/`
+completa (components/hooks/services/pages/tests): listagem com busca+paginação client-side, criação,
+exclusão, todas as ações de execução/sessão, troca de proxy, auto-reconnect, ações em lote e
+atualização em tempo real via WebSocket. Sem "editar" — GAP real de backend, documentado abaixo, não
+contornado com hack. Validada contra o backend Java já em execução (IntelliJ, não iniciado por esta
+sessão).
+
+Objetivo
+
+Instrução explícita do responsável: seguir exatamente o roadmap já congelado, sem reabrir decisões de
+arquitetura nem reconsultar governança — implementar integralmente o EPIC-FRONT-05 (Feature Bots)
+usando exclusivamente hooks gerados pelo Orval, sem Axios manual, reaproveitando ao máximo o Design
+System e os padrões já validados em Proxy/Contas-Servidores/Catálogo/Configurações, promovendo para
+`shared` qualquer lógica repetida assim que identificada (sem esperar uma 3ª ocorrência).
+
+### Entregue
+
+- **Promovido para `shared` (2º consumidor real, promoção imediata)**: `shared/types/proxy.ts`
+  (`TIPOS_DE_PROXY`/`TipoDeProxy`, antes só em `features/proxy/services/proxyValidation.ts`) e
+  `shared/lib/proxyFormValidation.ts` (`validateProxyForm`/`isProxyFormValid`/`ProxyFormValues`,
+  antes só em `features/proxy/services/proxyValidation.ts`) — a troca de proxy de um bot
+  (`ProxyBotRequest`) usa exatamente o mesmo formato host+porta+tipo de `ProxyRequest`. `features/
+  proxy/services/proxyValidation.ts` mantido como reexport, nenhum import existente quebrou.
+- **`features/bots/services/botState.ts`**: `EstadoDeExecucao`/`EstadoDeSessao` tipados manualmente
+  como view-model de UI (valores reais confirmados em `EstadoExecucao.java`/`EstadoSessao.java` do
+  backend — `PARADO`/`EXECUTANDO`/`PAUSADO` e `DISCONNECTED`/`CONNECTING`/`CONNECTED`; o OpenAPI
+  expõe `estadoExecucao`/`estadoSessao` como `string` cru, sem enum gerado).
+- **`features/bots/services/botValidation.ts`**: validação pura do formulário de criação —
+  `POST /api/v1/bots` aceita conta por `contaId` OU credenciais inline, e servidor por `servidorId`
+  OU host+porta inline (confirmado em `BotController.resolverCredenciais`/`resolverEndereco`); a
+  validação reflete essa regra real (uma das duas formas obrigatória por campo), sem inventar
+  restrição adicional (backend não tem bean validation em `CriarBotRequest`).
+- **`features/bots/services/filterBots.ts`**: busca client-side (username/host/porta/estado) — sem
+  parâmetro de busca em `GET /api/v1/bots`, mesmo padrão de Proxy/Contas/Servidores.
+- **`features/bots/hooks/useBotList`**: wrap de `useListar3` (`offset=0&limit=500`, paginação
+  client-side sobre o lote completo, mesma decisão de Contas/Servidores), `staleTime` 10s (mais baixo
+  que o grupo "estático" porque bots têm evento WS `"estado"` real) + assinatura de `wsBus` que
+  invalida `getListar3QueryKey()` a cada evento `"estado"` do canal global.
+- **`features/bots/hooks/useBotTableState`**: estado de UI local (busca + página).
+- **`features/bots/hooks/useBotMutations`**: `useCreateBot`/`useDeleteBot` (wrap de
+  `useCriar2`/`useRemover3` + invalidação + toast) — **sem `useUpdateBot`**, GAP documentado abaixo.
+- **`features/bots/hooks/useBotActions`**: uma mutation por ação
+  (iniciar/parar/pausar/retomar/conectar/desconectar/reconectar/trocarProxy/definirAutoReconnect),
+  todas via hooks gerados, cada uma invalidando a lista + toast de sucesso; `useBatchBotAction`
+  compõe ações em lote com `Promise.allSettled` sobre as funções cruas geradas (`iniciar`, `parar`
+  etc.) — GAP de backend (sem endpoint de lote), decisão travada #12 do doc 06.
+- **Componentes**: `BotStatusBadge` (dois badges independentes — execução e sessão são eixos
+  ortogonais no backend, não um estado combinado inventado), `BotTable` (especialização de
+  `DataTable`, checkbox de seleção + botões de ação contextuais por estado — evita oferecer uma ação
+  inválida como "Pausar" num bot já `PARADO` em vez de deixar o backend rejeitar com
+  `IllegalStateException`), `BotFormModal` (criação com `Tabs` — reuso do componente promovido em
+  EPIC-FRONT-04 — para alternar conta/servidor existente vs. inline), `BotProxyModal` (troca de
+  proxy, reaproveita a validação promovida para `shared`).
+- **`BotsPage`**: `PageHeader` com ação "Novo bot", `SearchBox`, barra de ações em lote (aparece só
+  com seleção ativa), `BotTable` com paginação, `BotFormModal`, `BotProxyModal`, `ConfirmDialog` de
+  exclusão. Loading/error/empty tratados pelo `DataTable` (reuso, sem duplicar lógica).
+- **Rota `/bots`** lazy-loaded, item "Bots" adicionado à `Sidebar` (logo após Dashboard, refletindo a
+  ordem do roadmap); badge de versão do `TopBar` atualizado para `EPIC-FRONT-05`.
+
+### GAP de backend confirmado (documentado, não implementado como solução de contorno)
+
+Sem "editar" bot — e, diferente de Proxy/Conta/Servidor, a composição client-side remover+criar não
+é uma opção segura aqui: `BotResponse` nunca devolve a senha usada na criação (`CriarBotRequest.
+password` é write-only), então recriar o bot exigiria pedir a senha de novo ao operador de qualquer
+forma — não há ganho real em fingir uma "edição" que na prática seria "excluir e criar de novo com
+os mesmos dados que o operador já teria que redigitar". A Feature Bots oferece só criar e excluir,
+documentado em `07-Matriz-Frontend-Backend.md`. Ações em lote continuam sendo N chamadas paralelas ao
+endpoint individual (`connect-batch` e equivalentes não existem no backend, GAP §8 do doc 06) — se
+uma falhar, o toast reporta quantas tiveram sucesso e quantas falharam, sem interromper as demais.
+
+### Testes
+
+Suite completa do frontend: 25 arquivos de teste, 108 testes, 0 falhas (adicionado `features/bots/
+tests/BotsPage.test.tsx` com 6 casos via MSW — listagem, empty state, criação com credenciais e
+host/porta manuais, ação individual de iniciar com atualização de estado, exclusão com confirmação,
+ação em lote sobre bots selecionados).
+
+### Validação executada
+
+`npx tsc -b --noEmit` sem erros; `npx eslint .` sem erros (5 avisos pré-existentes de
+`react-refresh/only-export-components` em `router.tsx`, mesma categoria já registrada, não
+bloqueantes); `npx prettier --check .` sem divergências após `--write` (17 arquivos reformatados,
+a maioria pré-existente de sessões anteriores que nunca haviam rodado o formatter mais recente,
+nenhuma mudança de conteúdo/lógica); `npx vitest run` — 25 arquivos, 108 testes, 0 falhas; `npm run
+build` sucesso, `BotsPage` confirmado como chunk separado (`BotsPage-*.js`, ~19 KB/~5 KB gzip).
+Validação manual contra o backend Java já em execução (IntelliJ, JDK 21, PostgreSQL local, não
+iniciado por esta sessão), via Browser pane: (1) lista vazia — `EmptyState` correto; (2) criado bot
+real via UI com credenciais manuais + host/porta manual (`manualbot@127.0.0.1:25565`) — apareceu na
+tabela com estado `Parado`/`Desconectado`; (3) ação "Iniciar" real — estado mudou para `Executando`
+(badge verde), botões contextuais trocaram para Pausar/Parar; (4) troca de proxy real via
+`BotProxyModal` (`10.0.0.5:1080 SOCKS5`) — badge de proxy atualizada na tabela; (5) exclusão via
+`ConfirmDialog` — tabela voltou ao `EmptyState`; console do navegador sem erros em nenhum passo.
+
+### Limitações Conhecidas
+
+- Sem "editar" bot — `BotResponse` não devolve a senha usada na criação, recompor via remover+criar
+  não é seguro (ver GAP acima). Diferente das limitações de Proxy/Conta/Servidor, não é uma questão
+  de identidade da entidade, é a ausência estrutural do dado necessário para recriar com segurança.
+- Sem endpoint de lote nativo (`connect-batch` e equivalentes) — ações em lote são N chamadas
+  paralelas client-side via `Promise.allSettled`, GAP já registrado desde a análise inicial.
+- Sem evento WS dedicado para mudança de proxy/auto-reconnect — cobertos pela invalidação explícita
+  de cada mutation (`onSuccess`), não pelo evento `"estado"` (que cobre só execução/sessão).
+
+---
+
+## Milestone Frontend 06 — EPIC-FRONT-06: Bot Details
+
+Status
+
+CONCLUÍDA — núcleo restante da Fase 2 do roadmap (`06-Plano-Construcao-Frontend.md`). `features/bots/
+details/` completa: 5 sub-abas roteadas sob `/bots/:id` (Console, Ações, Inventário, Mundo, Macros),
+todas via hooks gerados pelo Orval, canal WS por bot conectado pela primeira vez nesta sessão.
+Validada contra o backend Java já em execução (IntelliJ, não iniciado por esta sessão) — 3 GAPs reais
+confirmados manualmente e documentados abaixo, nenhum contornado com hack.
+
+Objetivo
+
+Instrução explícita do responsável: continuar exatamente do ponto anterior, arquitetura congelada,
+sem reabrir decisões nem reconsultar o legado — implementar integralmente o EPIC-FRONT-06 (Bot
+Details) em uma única sessão, cobrindo layout, navegação por abas, estado compartilhado do bot
+selecionado, Console/logs em tempo real/eventos WS, Inventário/Equipamento/Containers, Mundo/Chunk/
+Jogadores/Entidades, Macros do bot, painel de ações (movimento/interação), com Loading/Skeleton/
+Empty/Error em todas as telas, promovendo para `shared` qualquer componente/hook/utilitário que
+ganhasse um 2º consumidor real durante a implementação (sem esperar um 3º).
+
+### Entregue
+
+- **Promovido para `shared` (2º consumidor real)**: nenhuma nova promoção nesta sessão além das já
+  feitas no EPIC-FRONT-05 — `ComandoCatalogoResponse`/`useCatalogoMacros` (Catálogo, EPIC-FRONT-04)
+  ganhou seu 2º consumidor real (Macros do bot cruza a lista de macros ativas com o catálogo), mas já
+  vivia em `shared`/`features/catalogo` desde antes, nenhuma movimentação de código foi necessária.
+- **`features/bots/details/services/`**: `botState` reaproveitado de `features/bots/` (execução/
+  sessão); `itemStack.ts` (formatação de `ItemStackDto`, `count` é `string` no OpenAPI gerado, não
+  numérico); `botDetailsNav.ts` (lista de abas + helper `botDetailsPath`, único ponto de verdade da
+  navegação entre sub-abas).
+- **`features/bots/details/hooks/`**: `useBotDetail` (estado compartilhado do bot selecionado, wrap
+  de `useDetalhar2` + invalidação no evento WS global `"estado"` filtrado pelo `botId`),
+  `useBotEventsSocket` (abre `connectBotEventsSocket(id)` uma única vez no layout, mantido vivo entre
+  troca de abas — 1º consumidor real do canal per-bot, que só existia como infraestrutura desde a
+  Fundação), `useRealtimeLogs` (busca inicial + buffer WS `"log"` concatenados na leitura, sem
+  sincronizar `query.data` para `useState` a cada render — evita o anti-padrão de estado derivado),
+  `useBotConsole` (chat + comando, histórico duplo REST+WS), `useInventario`/`useInventarioActions`
+  (refetch no foco, 10 mutations de slot), `useEstadoMundo`/`useMundoEntidades` (polling leve, sem
+  push), `useBotActionsPanel` (14 mutations de movimento/interação), `useBotMacros` (macros ativas +
+  ativar/desativar, invalida também `getDetalhar2QueryKey(id)` porque `BotResponse.macrosAtivas`
+  espelha a mesma lista usada por `BotTable`).
+- **Componentes novos** (`features/bots/details/components/`, só 1 consumidor até agora — não
+  promovidos): `BotDetailsHeader`, `ConsoleLogViewer` (auto-scroll, Loading/Empty/Error próprios),
+  `ItemSlot`/`InventorySlotGrid` (sem componente de grade no Design System ainda — `DataTable` é
+  orientado a linhas).
+- **Páginas** (`features/bots/details/pages/`): `BotDetailsPage` (layout — cabeçalho + `Tabs` +
+  `<Outlet/>`, conecta o WS por bot), `ConsolePage`, `AcoesPage`, `InventarioPage`, `MundoPage`,
+  `MacrosPage`.
+- **Rotas aninhadas `/bots/:id/{console,acoes,inventario,mundo,macros}`** (decisão travada #5 do doc
+  06), índice redireciona para `console`; `BotTable` da listagem ganhou link de navegação
+  (`username` → `botDetailsPath(id)`).
+
+### GAPs de backend confirmados (validados manualmente contra o backend real, não contornados)
+
+1. **Sessão PLAY exigida**: `GET /bots/{id}/estado`, todo `/mundo/*` e todo `/inventario/*` respondem
+   `409 Conflito de estado — "Bot não está em uma sessão de jogo ativa (PLAY)"` quando o bot não está
+   conectado a um servidor Minecraft real. Confirmado criando um bot e nunca conectando-o — as 3 telas
+   (Mundo, Inventário, e o `estado` do cabeçalho) mostraram `ErrorState`+toast corretamente, sem dado
+   simulado. Comportamento correto do backend, não uma falha do frontend.
+2. **`MacroResponse.tipo` não corresponde a `nome`/`aliases` do Catálogo**: ativar a macro `antiafk`
+   (via alias do catálogo) e reconsultar `GET /bots/{id}/macros` devolveu `{"tipo":"TarefaAntiAFK"}` —
+   um valor derivado internamente pelo backend (provável nome de classe Java), não o alias original
+   usado para ativar. A tela usa `tipo` para descrever a macro (caindo para o valor cru quando não há
+   correspondência no catálogo) e para decidir quais macros do catálogo já estão ativas (comparação
+   que também falha nesse caso). Sem alternativa no frontend — o backend não devolve o alias original
+   em `MacroResponse`.
+3. **`DELETE /bots/{id}/macros/{alias}` sem efeito observável com bot desconectado**: usando o
+   próprio `tipo` (`TarefaAntiAFK`) como `alias` — única opção disponível dado o GAP #2 — a chamada
+   respondeu `200 OK` duas vezes em teste manual, mas `GET /bots/{id}/macros` continuou devolvendo a
+   mesma macro ativa depois. Confirmado via `read_network_requests` na Browser pane (corpo da resposta
+   do `GET` idêntico antes/depois do `DELETE` bem-sucedido). Não reproduzido com bot conectado — pode
+   ser comportamento esperado do backend (macro só é efetivamente removida com sessão ativa), mas o
+   frontend não tem como diferenciar isso de uma falha silenciosa sem mais contexto do backend.
+
+Nenhum dos 3 GAPs foi contornado com heurística cliente-side — documentados aqui e em
+`07-Matriz-Frontend-Backend.md` para o responsável do backend avaliar.
+
+### Testes
+
+Suite completa do frontend: 26 arquivos de teste, 116 testes, 0 falhas (adicionado
+`features/bots/details/tests/BotDetailsPage.test.tsx` com 8 casos via MSW cobrindo as 5 sub-abas —
+cabeçalho, navegação por `Tabs`, Console (chat+comando+limpar logs), Ações (mover), Inventário
+(grid+janela vazia), Mundo (estado+consulta de bloco+listas vazias), Macros (ativar)). Corrigido
+durante a sessão: `BotsPage.test.tsx` (EPIC-FRONT-05) não tinha `MemoryRouter` — quebrou quando
+`BotTable` ganhou o link de navegação (`react-router-dom`'s `<Link>` exige contexto de rota); ajustado
+para `MemoryRouter`, sem mudar nenhuma asserção de negócio.
+
+### Validação executada
+
+`npx tsc -b --noEmit` sem erros; `npx eslint .` sem erros (11 avisos pré-existentes de
+`react-refresh/only-export-components` em `router.tsx`, mesma categoria já registrada — cresceu de 5
+para 11 só porque o arquivo ganhou mais `const` de rota lazy, não é regressão de qualidade); `npx
+prettier --check .` sem divergências; `npx vitest run` — 26 arquivos, 116 testes, 0 falhas; `npm run
+build` sucesso, `BotDetailsPage`/`ConsolePage`/`AcoesPage`/`InventarioPage`/`MundoPage`/`MacrosPage`
+confirmados como chunks separados. Validação manual contra o backend Java já em execução (IntelliJ,
+JDK 21, PostgreSQL local, não iniciado por esta sessão), via Browser pane: (1) criado bot real
+(`detailsbot@127.0.0.1:25565`) e navegado até `/bots/{id}/console` pelo link da listagem; (2)
+executado o comando real `help` — resposta `SUCESSO` + saída completa da lista de comandos chegou via
+evento WS `"log"` em tempo real, confirmando o canal `/ws/bots/{id}/events` funcional de ponta a
+ponta; (3) aba Mundo/Inventário — `409` real do backend corretamente exibido como `ErrorState`+toast
+(bot nunca conectado a um servidor); (4) aba Macros — catálogo real carregado (`Follow`, `AntiAFK`,
+`Herbalismo`, `Miner`, `Mob`, `Pesca`, `DropAll`, `Twerk`), macro `antiafk` ativada com sucesso
+(GAPs #2/#3 acima descobertos exatamente nesta etapa); (5) aba Ações renderizou todos os controles
+(Movimento/Câmera/Postura/Bloco alvo/Entidade alvo/Usar item) sem erro; (6) bot de teste excluído ao
+final via `ConfirmDialog`; console do navegador sem erros em nenhum passo.
+
+### Limitações Conhecidas
+
+- Ver os 3 GAPs de backend confirmados acima — nenhum é uma limitação de frontend, todos exigem
+  decisão/ajuste do responsável pelo backend.
+- Duplicidade rara possível no histórico de comandos do Console (`useExecutar` via REST + eco do
+  mesmo comando via WS `"comando"`) — aceita como limitação conhecida, documentada no código.
+- `ConsoleLogViewer`/`ItemSlot`/`InventorySlotGrid` nascem dentro da feature (só 1 consumidor até
+  agora) — candidatos a promoção para `shared/components` no dia em que outra feature (ex. Viewer 3D
+  REST-only, Fase 4) precisar de grade de itens ou visualizador de log.
+
+---
+
 ## Roadmap Definitivo Pós-Milestone 39 (Pivô de Estratégia: Épicos de Fechamento)
 
 Instrução explícita do responsável (sessão de 2026-07-25, após a Milestone 39): parar de escolher trabalho macro por macro ou domínio por domínio; usar todo o conhecimento já acumulado nesta sessão (sem nova auditoria do legado) para produzir a matriz final de domínios e um roadmap de poucos épicos grandes, cada um fechando um domínio inteiro. Levantamento do legado considerado encerrado a partir daqui — sessões futuras executam um épico deste roadmap sem redescoberta.
@@ -3420,14 +3950,47 @@ Exemplo:
 
 Nome
 
-**Atualização mais recente (Milestone 42, sessão 2026-07-27): EPIC-FRONT-01 — Persistência
-PostgreSQL/Testes de Integração REST/CORS — CONCLUÍDA.** Mudança de fase declarada pelo responsável:
+**Atualização mais recente (Milestone Frontend 06, sessão 2026-07-27): EPIC-FRONT-06 — Bot
+Details — CONCLUÍDA.** Núcleo restante da Fase 2, `features/bots/details/` completa: 5 sub-abas
+roteadas sob `/bots/:id` (Console com logs em tempo real via WS + chat + comandos, Ações de
+movimento/interação, Inventário/Equipamento/Janela, Mundo/estado/bloco/entidades/jogadores, Macros do
+bot cruzadas com o Catálogo global). Canal WS por bot (`connectBotEventsSocket`) conectado pela
+primeira vez nesta sessão. 3 GAPs de backend confirmados manualmente contra o backend real (não
+contornados): (1) `estado`/`mundo/*`/`inventario/*` exigem sessão PLAY ativa (409 quando
+desconectado); (2) `MacroResponse.tipo` (única info de macro ativa) frequentemente não bate com
+`nome`/`aliases` do Catálogo; (3) `DELETE /macros/{alias}` responde 200 mas pode não remover a macro
+da lista com o bot desconectado. Ver subseção "Milestone Frontend 06" (Seção 5) para o detalhamento
+completo. Próximo passo: EPIC-FRONT-07 em diante implementam Monitoramento (Fase 3) e, se o backend
+resolver os GAPs pendentes, as features da Fase 4 (Spammer/Ferramentas/Viewer 3D/Minerador).
+
+Atualização anterior (Milestone Frontend 05, sessão 2026-07-27): EPIC-FRONT-05 — Feature Bots —
+CONCLUÍDA (listagem, CRUD exceto edição, ações de execução/sessão, troca de proxy, auto-reconnect,
+ações em lote — ver subseção "Milestone Frontend 05", Seção 5).
+
+Atualização anterior (Milestone Frontend 04, sessão 2026-07-27): EPIC-FRONT-04 "Fundação
+Administrativa" — CONCLUÍDA (Contas/Servidores, Catálogo de Comandos/Macros, Configurações — ver
+linha de log correspondente na Seção 9, sem subseção dedicada).
+
+Atualização anterior (Milestone Frontend 03, sessão 2026-07-27): EPIC-FRONT-03 — Feature
+Proxy — CONCLUÍDA.** Segunda feature funcional, `features/proxy/` completa e pronta para produção:
+listar/criar/editar/excluir com confirmação, busca e paginação client-side, tudo via hooks gerados
+pelo Orval. Achado de backend documentado ao final (não bloqueou a entrega): `ProxyController` não
+tem `PUT` (proxy não tem identidade própria por entrada) — "editar" implementado como composição
+client-side de remover+adicionar, usando as mesmas funções geradas. Validado contra o backend Java
+já em execução (IntelliJ): criação/edição/exclusão reais confirmadas via `curl` direto no backend.
+Ver subseção "Milestone Frontend 03" (Seção 5) para o detalhamento completo.
+
+Atualização anterior (Milestone Frontend 02, sessão 2026-07-27): EPIC-FRONT-02 — Feature Dashboard
+— CONCLUÍDA (ver subseção "Milestone Frontend 02", Seção 5).
+
+Atualização anterior (Milestone Frontend 01, sessão 2026-07-27): EPIC-FRONT-01 (Frontend) —
+Fundação do projeto React — CONCLUÍDA (ver subseção "Milestone Frontend 01", Seção 5).
+
+Atualização anterior (Milestone 42, sessão 2026-07-27): EPIC-FRONT-01 (Backend) — Persistência
+PostgreSQL/Testes de Integração REST/CORS — CONCLUÍDA. Mudança de fase declarada pelo responsável:
 migração funcional C#→Java considerada concluída dentro do escopo aprovado, Java passa a ser a
 única fonte de verdade, prioridade agora é evolução do produto (não mais auditoria do legado). Ver
-subseção "Milestone 42" (Seção 5) e **DEC-42** para o detalhamento completo. Próximo passo: escolha
-do responsável entre continuar o roadmap de épicos de fechamento (EPIC-I2, ver abaixo) ou abrir a
-próxima fase de evolução de produto (ex.: persistência de bots/GerenciadorDeBots, autenticação
-multi-usuário, ou o frontend React em si).
+subseção "Milestone 42" (Seção 5) e **DEC-42** para o detalhamento completo.
 
 Atualização anterior (Milestone 41, EPIC-APP2 — ver nota de continuidade acima da Seção "Roadmap
 Definitivo" e **DEC-41**).
@@ -3613,6 +4176,52 @@ Histórico (Milestones 5 a 29 concluídas — ver Seção 5 (subseções por mil
 | 2026-07-25 | Milestone 40 (EPIC-APP1, DEC-40, encerramento): mudança de fase — de "portar funcionalidades" para "executar bots reais através da aplicação Java". Primeira camada web do projeto (`interfaces.rest`/`interfaces.websocket`), REST + WebSocket sob `/api/v1`, construída inteiramente sobre Casos de Uso e a camada `interfaces.comando` (DEC-23) já aprovados, sem regra de negócio nova; legado C# deliberadamente não consultado nesta etapa (instrução explícita, sem precedente de API no legado). `application.registry.GerenciadorDeBots` (novo, registry por id, lacuna que nenhuma peça anterior cobria) + `CasoDeUsoRemoverBot`/`CasoDeUsoIniciarBot`/`CasoDeUsoPararBot`/`CasoDeUsoPausarBot`/`CasoDeUsoRetomarBot` (novos, cascas finas sobre `Bot`); `CasoDeUsoCriarBot` ganha `GerenciadorDeBots` no construtor (único ajuste de assinatura pré-existente). `ConfiguracaoDeComandos` conecta pela primeira vez em produção o `GerenciadorDeComandos`/~38 `Comando*` aprovados desde a Milestone 12/DEC-23 (nunca antes instanciados fora de teste) — macros expostas via `POST/DELETE /bots/{id}/macros/{alias}` sem nenhuma lógica de macro nova. `Conta`/`PerfilDeServidor` (novos, records com identidade) + `RepositorioDeContas`/`RepositorioDeServidores` (portas novas, adapters in-memory — PostgreSQL/DEC oficial do `CLAUDE.md` deliberadamente fora de escopo); `PoolDeProxies` ganha `adicionar`/`remover`/`listar`. `application.registry.NotificadorDeEventos` (novo, pub/sub por bot + global) alimentado por dois hooks opcionais aditivos (`SaidaDoOperador.definirOuvinte`/`Bot.definirOuvinteDeEstado`), consumido por `BotEventsWebSocketHandler` (WebSocket cru, sem STOMP, `/ws/bots/{id}/events` e `/ws/events`). Autenticação por `X-API-Key` (`ApiKeyFilter`) — decisão deliberada de não introduzir Spring Security/OAuth (YAGNI, sem consumidor externo real ainda). 11 Controllers REST (Bot/Ação/Inventário/Mundo/Macro/Comando/Conta/Servidor/Proxy/Log/Métricas), DTOs em `interfaces.rest.dto`, `GlobalExceptionHandler` (400/404/409/500 padronizados), paginação offset/limit. Validado end-to-end via `mvn spring-boot:run` real (criar servidor/conta → bot → iniciar → macro → evento WebSocket em tempo real → métricas → pausar → 409 → remover → 404 → 401 sem chave). Zero DEC anterior reaberta/contradita. 1089 testes automatizados (1072→1089, +17), 0 falhas, 0 erros, 3 skipped deliberadamente | ✔ |
 | 2026-07-25 | Milestone 41 (EPIC-APP2, DEC-41, encerramento): cobertura completa da API para as 12 telas do React mapeadas pelo responsável, sobre a base do EPIC-APP1/DEC-40. `BotResponse` enriquecido (proxy/macrosAtivas/posição/vida/autoReconnect/msDesdeUltimoKeepAlive numa única chamada de lista). Equipamento (`InventarioDoJogador` ganha 5 getters nomeados de armadura/mão) e Container/Janela (`SessaoDeJogo.janelaAtual()`/DEC-37, nunca antes exposta) via `InventarioController`. `EstadoMundoResponse` ganha `chunkAtual`; `/mundo/entidades` ganha filtro `?tipo=mob|jogador`. Catálogos globais novos `GET /commands`/`GET /macros` (reaproveitam metadado de `GerenciadorDeComandos.comandos()`, sem duplicar). `PUT /bots/{id}/proxy` expõe `Bot.trocarProxy` (existia desde a Milestone 22, sem caminho de produção); `PUT /bots/{id}/auto-reconnect` exigiu 2 métodos aditivos novos (`SessaoBot.comAutoReconnect`/`Bot.definirAutoReconnect` — antes não havia nenhuma forma alcançável de ligar reconexão automática por bot); `GET /configuracao/reconnect-policy` só-leitura sobre o bean `PoliticaDeReconexaoComJitter` (tipo de retorno do bean mudado de interface para concreto). `MetricasResponse` ganha `porEstadoDeSessao`/`memoria`/`uptimeMs`/`cpuLoad` (via `java.lang.management`, sem Actuator) e `motorDeTick` (instrumentação nova em `MotorDeTick`, aditiva, sem alterar lógica de tick). `ComandoController`/`MacroController` publicam evento `"comando"` via `NotificadorDeEventos` já existente. **4 limitações documentadas como decisão consciente, não implementadas**: bioma (descartado no decode desde a Milestone 7, exigiria reabrir codec de protocolo), NPCs (protocolo 1.8 não distingue NPC de mob/player), ping real/RTT (nunca medido pelo client — exposto como `msDesdeUltimoKeepAlive`, nome honesto, não fabricado), separação chat/erro/comando no console (`SaidaDoOperador` é buffer único por design, DEC-26 — retag exigiria dezenas de call sites). Zero DEC anterior reaberta/contradita (protocolo/domínio intocados). 1098 testes automatizados (1089→1098, +9), 0 falhas, 0 erros, 3 skipped deliberadamente; validação adicional end-to-end via `mvn spring-boot:run` real + WebSocket (Node.js nativo) | ✔ |
 | 2026-07-27 | Milestone 42 (EPIC-FRONT-01, DEC-42, encerramento): mudança de fase declarada pelo responsável — migração funcional C#→Java concluída dentro do escopo aprovado, Java é a única fonte de verdade, sem novas auditorias do legado salvo pedido explícito/bug específico. Preparação do backend para produção: `RepositorioDeContasJpa`/`RepositorioDeServidoresJpa`/`RepositorioDeProxiesJpa` (`infrastructure.persistence`) substituem os adapters in-memory (removidos) atrás das portas `RepositorioDeContas`/`RepositorioDeServidores` já existentes e da porta nova `RepositorioDeProxies` (mesmo padrão, fecha a lacuna de `PoolDeProxies` nunca ter tido persistência própria — `PoolDeProxies` continua como cache em memória usado por `GerenciadorDeReconexao`, carregado do repositório no startup, escrito em write-through por `ProxyController`). 3 `@Entity`/`JpaRepository` novos (`infrastructure.persistence.jpa`), domínio sem nenhuma anotação de framework. Schema via Flyway (`db/migration/V1__contas_servidores_proxies.sql`, `hibernate.ddl-auto=validate`); tabela `proxies` deliberadamente sem `UNIQUE` (fiel ao `PoolDeProxies` in-memory, que sempre aceitou duplicatas). Credenciais via variável de ambiente (mesmo padrão de `advancedbot.api.key`), role/banco dedicados criados num PostgreSQL 18 já instalado na máquina. Achado técnico: `EntityScan`/`EnableJpaRepositories` precisaram ser explícitos em `AdvancedBotApplication` — `AutoConfigurationPackages` não segue `scanBasePackages` customizado. 6 testes de integração REST novos (`ContaControllerTest`/`ServidorControllerTest`/`ProxyControllerTest`, primeiros testes de Controller HTTP do projeto — lacuna aberta desde a DEC-40), `@SpringBootTest`+`MockMvc` contra PostgreSQL real dedicado a testes (`advancedbot_test`), isolamento via `@Transactional`. Bug de CORS encontrado e corrigido em `ApiKeyFilter`: preflight `OPTIONS` era barrado com 401 antes do CORS do Spring MVC rodar (preflight nunca carrega `X-API-Key` por spec do navegador), quebrando CORS para qualquer requisição não-simples a partir de um browser. Zero DEC de protocolo/domínio reaberta, zero contrato de API existente alterado. 1098→1104 testes automatizados (+6), 0 falhas, 0 erros, 3 skipped deliberadamente; validação manual adicional via `mvn spring-boot:run` real contra PostgreSQL de desenvolvimento (Flyway migra e depois confirma idempotência; CRUD via `curl`; preflight CORS confirmado corrigido; WebSocket `/ws/events` conectado via Node.js nativo) | ✔ |
+| 2026-07-27 | Milestone Frontend 01 (EPIC-FRONT-01 Frontend, encerramento): arquitetura do frontend já congelada em sessão anterior (`docs-reescrita/docs/12-Interface/06-Plano-Construcao-Frontend.md`/`07-Matriz-Frontend-Backend.md`, zero decisão em aberto); esta sessão implementa integralmente a fundação, sem nenhuma tela de negócio. Projeto `advancedbot-frontend/` (Vite + React 19 + TypeScript) criado na raiz, irmão de `advancedbot-java/`. Tailwind v4 com tema claro/escuro por classe (slice Zustand `uiStore` persistido); React Router v7 (data router, `AppShell` + rota de fundação + 404); TanStack Query (`QueryCache`/`MutationCache.onError` centralizados, todo erro vira `AppError` tipado e Toast automático); Zustand (`uiStore`, `toastStore`); Axios (`httpClient` único, interceptors `X-API-Key`/`ErrorResponse`→`AppError`); mitt (`wsBus`, `ManagedSocket` com reconexão por backoff exponencial, canais `/ws/events` global e `/ws/bots/{id}/events` por bot, parser único do envelope `EventoDeBot`/`IdentificadorBot` incluindo o formato `{"value": uuid}` da DEC-40). Orval configurado contra `/v3/api-docs` (springdoc, já presente no backend) e executado com sucesso contra o backend real: 13 controllers, 57 paths, 71 arquivos gerados em `shared/api/generated` — nenhum DTO de REST escrito à mão a partir de agora. Design System base: `Button`/`Input`/`NumberInput`/`SearchBox`/`Card`/`Badge`/`Tooltip`/`Spinner`/`Skeleton`/`ThemeToggle` (atômicos), `Modal`/`ConfirmDialog`/`DataTable` (moleculares, virtualização própria sem lib externa acima de 200 linhas), `Toast`/`EmptyState`/`ErrorState`/`ErrorBoundary` (feedback), `Sidebar`(genérico, recebe `items` por propriedade)/`TopBar`/`Workspace`/`AppShell`/`PageContainer`/`PageHeader` (layout). ESLint (flat config) + Prettier configurados; Vitest + React Testing Library + MSW (`src/test/setup.ts`/`server.ts`). Nota de nomenclatura: o rótulo `EPIC-FRONT-01` já havia sido usado na Milestone 42 para o backend (persistência/CORS) — mantido pelo responsável do projeto para esta milestone de frontend também, registrado explicitamente para não confundir as duas. 19 testes automatizados (Vitest), 0 falhas. Validação: `tsc -b --noEmit` sem erros, `eslint .` sem erros/avisos, `prettier --check .` sem divergências, `vitest run` 19/19, `npm run build` sucesso (bundle ~373 KB/~120 KB gzip); validação manual no navegador com backend real rodando (JDK 21, PostgreSQL 18 local) — `AppShell` renderiza, tema dark por padrão, toggle de tema e colapso de sidebar funcionam, WebSocket global conectado sem erros de console. Limitação conhecida: `npm audit` reporta uma vulnerabilidade alta em `react-router-dom` (GHSA-qwww-vcr4-c8h2, modo RSC/framework, não exercido por esta SPA em modo biblioteca) presente até a última versão publicada — documentada, não corrigível upstream ainda | ✔ |
+| 2026-07-27 | Milestone Frontend 02 (EPIC-FRONT-02, encerramento): primeira feature funcional do frontend sobre a fundação da Milestone Frontend 01 — `features/dashboard/` completa (components/hooks/services/pages/tests), consumindo exclusivamente hooks gerados pelo Orval, zero chamada Axios manual na feature. Achado/correção antes da implementação: `orval.config.ts` tinha `override.query: {useQuery:true, useMutation:true}` — com os dois juntos o Orval 8.23 inverte a geração (GET vira `useMutation`, POST/PUT/DELETE viram `useQuery`), defeito que só apareceu ao consumir o primeiro hook GET de verdade (`useMetricas`); corrigido para `{signal:true}` (Orval decide pelo verbo HTTP, padrão correto), `shared/api/generated` regenerado e conferido nos 13 controllers. Entregue: `services/formatters.ts`/`deriveMetrics.ts` (funções puras, sem HTTP); `hooks/useDashboardMetrics` (wrap de `useMetricas` + `refetchInterval` 5s de fallback + invalidação imediata via `wsBus` no evento `"estado"` do canal `/ws/events`); `hooks/useDashboardTotals` (wrap de `useListar2`/`useListar`/`useListar1` de contas/servidores/proxies, `staleTime` 5min — nenhum dos três tem WS); `hooks/useMetricsHistory` (acumula até 30 amostras reais de CPU/TPS em memória para os gráficos, sem endpoint de série histórica no backend); componentes `MetricCard`/`StateBreakdownCard`/`MetricTrendChart` (sparkline SVG sem lib nova)/`DashboardGapNotice`; `DashboardPage` com 12 `MetricCard`, 2 `StateBreakdownCard`, 2 `MetricTrendChart`, loading (skeleton de página inteira), error (`ErrorState` com retry), grid responsivo, tema claro/escuro herdado. 3 GAPs registrados explicitamente na própria tela (não simulados): Threads da JVM (ausente no backend), Proxy em uso (`ProxyResponse` sem campo de associação a bot, só total cadastrado), Heap vs. memória não-heap (backend só expõe heap — "Memória JVM" e "Heap" pedidos como cards separados colapsam num único card real). `DashboardPage` virou rota raiz (`/`), `FoundationPage` removida (código morto). 44 testes automatizados (19→44, +25: `formatters` 13, `deriveMetrics` 6, `MetricCard` 2, `DashboardPage` 3 com MSW). Validação: `tsc -b --noEmit`/`eslint .`/`prettier --check .` sem erros, `vitest run` 44/44, `npm run build` sucesso; validação manual contra backend Java real (JDK 21, PostgreSQL 18 local) incluindo criar/iniciar um bot via `curl` e observar a tela atualizar sozinha (Bots totais 0→1, distribuição por estado refletindo Executando/Desconectado) sem recarregar a página, tema escuro alternado, viewport mobile (375px) sem overflow horizontal, console sem erros em todos os passos; dados de teste removidos do banco de desenvolvimento ao final | ✔ |
+| 2026-07-27 | Milestone Frontend 03 (EPIC-FRONT-03, encerramento): segunda feature funcional do frontend, `features/proxy/` completa (components/hooks/services/pages/tests), backend já em execução via IntelliJ durante todo o desenvolvimento. Entregue: `Select` atômico novo no Design System (`shared/components/atoms/Select.tsx` — já especificado desde a Fase 0, implementado agora para o campo `tipo`); `services/proxyValidation.ts` (host/porta 1-65535/tipo dentre HTTP-SOCKS4-SOCKS5, sem HTTP); `services/filterProxies.ts` (busca/paginação client-side, backend não tem esses parâmetros em `GET /proxies`); `hooks/useProxyList` (wrap `useListar1`, `staleTime` 5min); `hooks/useProxyTableState` (busca+página, estado de UI local); `hooks/useProxyMutations` (`useCreateProxy`/`useDeleteProxy` wrap de `useAdicionar`/`useRemover1` gerados + invalidação + toast; `useUpdateProxy` mutation composta chamando `remover1`+`adicionar` gerados em sequência); componentes `ProxyTable` (especialização de `DataTable`, sem coluna de latência — GAP conhecido) e `ProxyFormModal` (criar/editar, reaproveita `Modal`/`ConfirmDialog`); `ProxyPage` com `PageHeader`+`SearchBox`+`ProxyTable`+paginação+modal+confirmação de exclusão; rota `/proxy` lazy-loaded (primeiro uso real de code-splitting por rota, decisão travada #5); correção incidental no `MutationCache.onError` global (`shared/lib/queryClient.ts`) para preservar a mensagem de erros que não são `AppError` (necessário para o erro específico de `useUpdateProxy`, beneficia qualquer mutation composta futura). **Achado de backend (documentado ao final, não bloqueou a entrega)**: `ProxyController.java` não tem `PUT` — proxy não tem identidade própria por entrada (chave natural host+port+tipo, comentário no próprio código confirma que é deliberado); "editar" implementado como remover+adicionar client-side com as mesmas funções geradas, sem endpoint novo; se a remoção for bem-sucedida e a criação falhar a entrada original já foi perdida (mensagem de erro específica avisa o operador); backend permite duplicatas exatas (sem `UNIQUE`) e `remover()` remove só a primeira ocorrência — com duplicatas na lista, editar/excluir uma linha pode afetar a outra ocorrência idêntica (limitação herdada do modelo de dados do backend). 64 testes automatizados (44→64, +20: `proxyValidation` 4, `filterProxies` 6, `ProxyFormModal` 3, `ProxyTable` 2, `ProxyPage` 5 com MSW). Validação: `tsc -b --noEmit`/`eslint .`/`prettier --check .` sem erros (1 aviso pré-existente não bloqueante), `vitest run` 64/64, `npm run build` sucesso com `ProxyPage` confirmado como chunk separado; validação manual contra o backend já em execução — criação/edição (porta 1080→1081 sem duplicar)/exclusão de uma proxy real confirmadas via `curl` direto no backend a cada passo, viewport mobile (375px) sem overflow, console do navegador sem erros (um erro de HMR transitório de um refactor de nome em andamento não se repetiu após reiniciar o servidor de desenvolvimento e recarregar) | ✔ |
+| 2026-07-27 | Milestone Frontend 04 (EPIC-FRONT-04 "Fundação Administrativa", encerramento): quatro features independentes da Fase 1 implementadas na mesma sessão (Contas, Servidores, Catálogo Comandos/Macros, Configurações), reutilizando integralmente a fundação das Milestones Frontend 01-03, backend já em execução via IntelliJ durante todo o desenvolvimento. `shared/lib/pagination.ts` (`paginate`/`totalPages`) extraído de `features/proxy/services/filterProxies.ts` no momento em que Contas/Servidores precisaram da mesma lógica (regra de promoção do Design System, 2º consumidor real); `shared/components/navigation/Tabs.tsx` novo, promovido direto para `shared/components` porque nasceu com dois consumidores já no mesmo épico (Contas/Servidores e Catálogo alternam sub-recurso na mesma rota). `features/contas-servidores/` (CRUD completo de Conta e Servidor, uma rota `/contas-servidores` com abas `ContasPanel`/`ServidoresPanel`): `services/contaValidation.ts`/`servidorValidation.ts`, `services/filterEntities.ts` (busca client-side, mesmo padrão de Proxy), `hooks/useContaList`/`useServidorList` (`GET /contas`/`GET /servidores` com `offset=0&limit=500`, paginação client-side sobre o lote completo — decisão explícita do responsável mesmo o backend suportando `offset`/`limit` real), `hooks/useContaMutations`/`useServidorMutations` (`useCreateConta`/`useCreateServidor`, `useDeleteConta`/`useDeleteServidor`, `useUpdateConta`/`useUpdateServidor` mutation composta remover+criar, mesmo padrão de `useUpdateProxy` — ver GAP abaixo), componentes `ContaTable`/`ContaFormModal`/`ServidorTable`/`ServidorFormModal`. `features/catalogo/` (somente leitura, rota `/catalogo` com abas `ComandosPanel`/`MacrosPanel` sobre `GET /commands`/`GET /macros`): `services/filterCatalogo.ts`, `hooks/useCatalogoComandos`/`useCatalogoMacros`/`useCatalogoTableState` (reused por ambas as abas, mesmo DTO `ComandoCatalogoResponse`), componente `CatalogoTable` reutilizado pelas duas abas; agrupamento avaliado e não aplicado — `ComandoCatalogoResponse` não expõe nenhuma categoria/taxonomia, agrupar seria inventar estrutura ausente no backend. `features/configuracoes/` (rota `/configuracoes`, somente leitura sobre `GET /configuracao/reconnect-policy`): `hooks/useConfiguracao`, componente `ReconnectPolicyPanel` (fica local à feature, único consumidor). `AppShell`/`router.tsx` atualizados com as 3 novas rotas lazy-loaded e itens de navegação; badge de versão do `TopBar` atualizado para `EPIC-FRONT-04`. **GAP de backend confirmado (documentado, não implementado como solução de contorno)**: `conta-controller.ts`/`servidor-controller.ts` não têm `PUT` (só `listar*/criar*/detalhar*/remover*`) — mesma limitação estrutural já registrada para Proxy na Milestone Frontend 03, mas agravada aqui porque Conta/Servidor têm identidade própria por `id` (UUID gerado pelo backend): "editar" via remover+criar client-side troca o `id` da entidade (diferente de Proxy, cuja chave é natural); se a remoção for bem-sucedida e a criação falhar, a entidade original já foi perdida (mesma mensagem de erro específica de `useUpdateProxy`). 102 testes automatizados (64→102, +38: `pagination` 3, `Tabs` 2, `contaValidation` 5, `servidorValidation` 5, `filterEntities` 6, `filterCatalogo` 4, `ContasServidoresPage` 7 com MSW, `CatalogoPage` 4 com MSW, `ConfiguracoesPage` 2 com MSW). Validação: `tsc -b --noEmit`/`eslint .` sem erros (4 avisos pré-existentes de fast-refresh em `router.tsx`, não bloqueantes, mesma categoria já registrada), `vitest run` 102/102, `npm run build` sucesso com `ContasServidoresPage`/`CatalogoPage`/`ConfiguracoesPage`/`Tabs`/`pagination` confirmados como chunks separados; validação manual completa contra o backend real via `.claude/launch.json` (`npm --prefix advancedbot-frontend run dev`) e Browser pane — criar/editar/excluir uma Conta e um Servidor reais (CRUD completo nas duas abas), listar e buscar no Catálogo de Comandos (3 páginas reais) e Macros (8 itens reais) com paginação e busca funcionando, ler a Política de Reconexão real (2000ms/1000ms), console do navegador sem erros em todos os passos; dados de teste (1 conta, 1 servidor) removidos do banco de desenvolvimento ao final | ✔ |
+| 2026-07-27 | Milestone Frontend 05 (EPIC-FRONT-05 "Feature Bots", encerramento): núcleo da Fase 2 do roadmap, `features/bots/` completa (components/hooks/services/pages/tests), reutilizando integralmente a fundação e os padrões das Milestones Frontend 01-04, backend já em execução via IntelliJ durante todo o desenvolvimento. Promovido para `shared` no momento em que a 2ª necessidade real apareceu (troca de proxy de bot usa o mesmo formato host+porta+tipo do cadastro de Proxy): `shared/types/proxy.ts` (`TIPOS_DE_PROXY`/`TipoDeProxy`) e `shared/lib/proxyFormValidation.ts` (`validateProxyForm`/`isProxyFormValid`/`ProxyFormValues`), ambos antes só em `features/proxy/services/proxyValidation.ts` (mantido como reexport, nenhum import existente quebrou). `features/bots/services/botState.ts` (`EstadoDeExecucao`/`EstadoDeSessao` tipados manualmente como view-model — `estadoExecucao`/`estadoSessao` são `string` cru no OpenAPI, valores reais confirmados em `EstadoExecucao.java`/`EstadoSessao.java`), `services/botValidation.ts` (validação pura refletindo a regra real de `POST /api/v1/bots`: conta por `contaId` OU credenciais inline, servidor por `servidorId` OU host+porta inline, confirmado em `BotController.resolverCredenciais`/`resolverEndereco`), `services/filterBots.ts` (busca client-side). `hooks/useBotList` (wrap `useListar3`, `offset=0&limit=500`, paginação client-side, `staleTime` 10s + invalidação via `wsBus` no evento `"estado"` do canal global), `hooks/useBotTableState`, `hooks/useBotMutations` (`useCreateBot`/`useDeleteBot`, sem `useUpdateBot` — GAP abaixo), `hooks/useBotActions` (uma mutation por ação: iniciar/parar/pausar/retomar/conectar/desconectar/reconectar/trocarProxy/definirAutoReconnect; `useBatchBotAction` compõe ações em lote via `Promise.allSettled` sobre as funções cruas geradas). Componentes `BotStatusBadge` (execução e sessão como eixos independentes), `BotTable` (especialização de `DataTable`, botões de ação contextuais por estado — evita oferecer ação inválida ao operador), `BotFormModal` (reusa `Tabs` para alternar conta/servidor existente vs. inline), `BotProxyModal`. `BotsPage` com `PageHeader`+`SearchBox`+barra de ações em lote+`BotTable`+modais+confirmação de exclusão; rota `/bots` lazy-loaded, item "Bots" na `Sidebar`; badge de versão do `TopBar` atualizado para `EPIC-FRONT-05`. **GAP de backend confirmado (documentado, não implementado como solução de contorno)**: sem "editar" bot — diferente de Proxy/Conta/Servidor, a composição client-side remover+criar não é segura aqui porque `BotResponse` nunca devolve a senha usada na criação (`CriarBotRequest.password` é write-only); a Feature Bots oferece só criar e excluir. Ações em lote continuam sendo N chamadas paralelas client-side (sem `connect-batch` nativo, GAP §8 já registrado). 108 testes automatizados (102→108, +6: `BotsPage` com MSW — listagem, empty state, criação com credenciais e host/porta manuais, ação de iniciar com atualização de estado, exclusão com confirmação, ação em lote). Validação: `tsc -b --noEmit`/`eslint .` sem erros (5 avisos pré-existentes de fast-refresh em `router.tsx`, mesma categoria já registrada, não bloqueantes), `prettier --check .` sem divergências após `--write` (17 arquivos reformatados, nenhuma mudança de conteúdo/lógica), `vitest run` 108/108, `npm run build` sucesso com `BotsPage` confirmado como chunk separado; validação manual completa contra o backend real via Browser pane — criar um bot real com credenciais e host/porta manuais, iniciar (estado mudou para Executando com botões contextuais corretos), trocar proxy real (badge atualizada), excluir com confirmação (voltou ao EmptyState), console do navegador sem erros em todos os passos | ✔ |
+| 2026-07-27 | Milestone Frontend 06 (EPIC-FRONT-06 "Bot Details", encerramento): núcleo restante da Fase 2 do roadmap, `features/bots/details/` completa (hooks/services/components/pages/tests), reutilizando integralmente a fundação e os padrões das Milestones Frontend 01-05, backend já em execução via IntelliJ durante todo o desenvolvimento. 5 sub-abas roteadas sob `/bots/:id` (rotas aninhadas, decisão travada #5): Console (`hooks/useRealtimeLogs` — busca inicial via `useListar5` + buffer WS `"log"` concatenados na leitura, sem sincronizar `query.data` para `useState`; `hooks/useBotConsole` — chat via `useEnviarMensagemDeChat`, comando via `useExecutar`, histórico duplo REST+WS `"comando"`; componente `ConsoleLogViewer` novo), Ações (`hooks/useBotActionsPanel`, 14 mutations de `acao-controller`, invalida `getEstadoQueryKey` em ações de movimento/câmera/postura; página `AcoesPage`), Inventário (`hooks/useInventario`/`useInventarioActions`, 3 queries + 10 mutations de `inventario-controller`; componentes novos `ItemSlot`/`InventorySlotGrid` — sem grade no Design System ainda), Mundo (`hooks/useEstadoMundo`/`useMundoEntidades`/`useBlocoLookup`, polling leve sem WS dedicado; página `MundoPage` com `DataTable` reusado para entidades/jogadores), Macros (`hooks/useBotMacros`, cruza `useListar4`/`useAtivar`/`useDesativar` do `macro-controller` com `useCatalogoMacros` do Catálogo global — 2º consumidor real do catálogo de macros; invalida também `getDetalhar2QueryKey(id)` para manter `BotResponse.macrosAtivas` sincronizado). Canal WS por bot (`connectBotEventsSocket`, infraestrutura da Fundação nunca antes exercitada) conectado por `hooks/useBotEventsSocket` no layout (`BotDetailsPage`), mantido vivo entre troca de abas; `BotDetailsPage` também usa `hooks/useBotDetail` (wrap de `useDetalhar2` + invalidação no evento WS global `"estado"` filtrado por `botId`) para o estado compartilhado do bot selecionado. `BotTable` da listagem (EPIC-FRONT-05) ganhou link de navegação (`username` → `/bots/{id}/console`). **3 GAPs de backend confirmados manualmente contra o backend real (documentados, não contornados)**: (1) `GET /estado`, todo `/mundo/*` e todo `/inventario/*` respondem `409 "Bot não está em uma sessão de jogo ativa (PLAY)"` quando o bot não está conectado a um servidor — confirmado criando um bot e nunca conectando-o, tratado como `ErrorState`+toast normal; (2) `MacroResponse.tipo` (única informação devolvida para macros ativas) frequentemente não corresponde a `nome`/`aliases` do Catálogo — ativar `antiafk` e reconsultar `GET /macros` devolveu `{"tipo":"TarefaAntiAFK"}`, valor derivado internamente pelo backend, não o alias original; a correspondência com o catálogo cai para o valor cru quando não há match; (3) `DELETE /bots/{id}/macros/{alias}` usando `tipo` como `alias` (única opção dado o GAP #2) respondeu `200 OK` duas vezes em teste manual, mas `GET /macros` continuou devolvendo a mesma macro ativa depois — confirmado via `read_network_requests` na Browser pane, sem efeito observável com o bot desconectado. 116 testes automatizados (108→116, +8: `BotDetailsPage` com MSW cobrindo as 5 sub-abas — cabeçalho, navegação por `Tabs`, Console chat+comando+limpar logs, Ações mover, Inventário grid+janela vazia, Mundo estado+bloco+listas vazias, Macros ativar); corrigido incidentalmente `BotsPage.test.tsx` (EPIC-FRONT-05), que não tinha `MemoryRouter` e quebrou quando `BotTable` ganhou `<Link>`. Validação: `tsc -b --noEmit`/`eslint .` sem erros (11 avisos pré-existentes de fast-refresh em `router.tsx`, cresceu de 5 para 11 só por mais rotas lazy, mesma categoria já registrada), `prettier --check .` sem divergências, `vitest run` 116/116, `npm run build` sucesso com `BotDetailsPage`/`ConsolePage`/`AcoesPage`/`InventarioPage`/`MundoPage`/`MacrosPage` confirmados como chunks separados; validação manual completa contra o backend real via Browser pane — bot real criado e navegado até o Console pelo link da listagem, comando `help` executado com resposta e saída completa chegando via evento WS `"log"` em tempo real (canal per-bot confirmado ponta a ponta), Mundo/Inventário exibindo corretamente o `409` real do backend, catálogo real de macros carregado (8 macros) e `antiafk` ativada com sucesso (descobrindo os GAPs #2/#3 nesse mesmo passo), aba Ações renderizada sem erro, bot de teste excluído ao final, console do navegador sem erros em nenhum passo | ✔ |
+| 2026-07-28 | Milestone 43 (EPIC-PROD-01, DEC-43, encerramento): mudança de fase — de "portar funcionalidades" para "produto utilizável no dia a dia". Único objeto do domínio ainda 100% em memória (`Bot`/`GerenciadorDeBots`, confirmado por auditoria prévia contra a implementação Java real, legado C# deliberadamente não consultado) ganha persistência completa, seguindo o mesmo padrão de `RepositorioDeContas`/`RepositorioDeServidores`/`RepositorioDeProxies` (DEC-42): porta nova `RepositorioDeBots` (`application.port`) + adapter `RepositorioDeBotsJpa` (`infrastructure.persistence`) + `BotJpaEntity`/`BotMacroJpaEntity` (`infrastructure.persistence.jpa`, domínio sem nenhuma anotação de framework) + `db/migration/V2__bots.sql` (tabelas `bots`/`bot_macros`, FK `ON DELETE CASCADE`). Diferente de Conta/Servidor/Proxy (CRUD simples), `Bot` é um agregado mutável com >10 Casos de Uso alterando estado em produção — decisão de design: em vez de um único `salvar(Bot)`, a porta expõe 4 operações (`criar`/`atualizarConfiguracao`/`sincronizarMacros`/`remover`), cada uma chamada pelo Caso de Uso que já realiza a mutação em memória correspondente (`CasoDeUsoCriarBot`/`IniciarBot`/`PararBot`/`PausarBot`/`RetomarBot`/`DefinirAutoReconnect`/`TrocarProxy`/`ConectarBot`/`DesconectarBot`/`RemoverBot`, todos ganham `RepositorioDeBots` como colaborador novo, nenhuma assinatura pública alterada; `MacroController` ganha o mesmo colaborador para sincronizar `Bot.getTarefasContinuas()` após cada ativação/desativação de macro). `CasoDeUsoCriarBot.criar` ganha 2 overloads aditivos (`(EnderecoServidor,CredenciaisBot,UUID contaId,UUID servidorId)` e `(IdentificadorBot,EnderecoServidor,CredenciaisBot,UUID,UUID)`) — o overload de 2 argumentos original permanece intacto para os call sites/testes existentes; o overload com `IdentificadorBot` explícito é o que permite ao restaurador reaproveitar o id original em vez de gerar um novo. Reconstrução no boot: `RestauradorDeBots` (`application.bootstrap`, `ApplicationRunner` novo — único componente sem Caso de Uso pré-existente por trás, porque nenhuma peça anterior orquestrava "ler tudo do repositório e recriar", só orquestração, zero regra de negócio nova) lê `RepositorioDeBots.listar()` no boot e, para cada bot persistido, chama exatamente os mesmos Casos de Uso que a API usa em operação normal: `CasoDeUsoCriarBot.criar(id,...)` (registra em `GerenciadorDeBots`/`MotorDeExecucaoPort`/`GerenciadorDeReconexao`, os 3 registries que hoje só eram populados via API), depois `CasoDeUsoDefinirAutoReconnect` se aplicável, depois replay de cada macro persistida via `GerenciadorDeComandos.executar(bot, alias)` (mesmo comando que a ativação normal usaria), depois `CasoDeUsoConectarBot.connect(bot)` se o estado desejado era `EXECUTANDO`/`PAUSADO` (reconstitui a sessão de rede de verdade; falha de conexão é tolerada e logada — se `autoReconnect=true` o bot já está registrado em `GerenciadorDeReconexao` e a reconexão automática assume dali, mesmo caminho de uma queda em produção). **Limitação documentada, decisão consciente**: macro `Follow` (alias `follow`) é a única das 8 macros deliberadamente excluída da restauração — depende de um `entityId` de jogador só válido dentro da `SessaoDeJogo` em que foi criada (`TarefaFollow`), não sobrevive a uma reconexão de jeito nenhum, com ou sem persistência; as outras 7 (`antiafk`/`herbalismo`/`miner`/`mob`/`autofish`/`dropall`/`twerk`) são restauradas com os argumentos-padrão de cada comando (não com os argumentos exatos usados na ativação original — `TarefaContinua` não expõe accessor de configuração hoje, mesmo GAP já registrado na Milestone Frontend 06 item 2 sobre `MacroResponse.tipo`; persistir os argumentos exigiria uma mudança de contrato fora deste escopo). **Bug real encontrado e corrigido durante a validação manual, não durante os testes automatizados**: `BotMacroSpringDataRepository.deleteByBotId` (query derivada Spring Data com prefixo `delete`) lançava `TransactionRequiredException` sempre que havia ao menos uma linha para remover, porque — ao contrário dos métodos herdados de `SimpleJpaRepository` (`save`/`deleteById`), que já nascem `@Transactional` — um método de query derivada customizado só executa `EntityManager.remove()` dentro de transação se isso for pedido explicitamente; o teste automatizado inicial não pegou o bug porque rodava com `@Transactional` de classe (mascarando a ausência de transação própria do método); corrigido com `@Transactional` explícito no método, e o teste de integração (`RepositorioDeBotsJpaTest`) foi reescrito sem `@Transactional` de classe (limpeza manual via `@AfterEach`) justamente para não mascarar esse tipo de regressão de novo. Zero Port pré-existente alterada, zero contrato REST alterado, zero arquitetura alterada. 1104→1109 testes automatizados (+5: `RepositorioDeBotsJpaTest` com 4 cenários incluindo o de regressão do bug de transação, mais os ajustes de fakes nos testes pré-existentes de Casos de Uso de Bot). Validação manual obrigatória executada via `mvn spring-boot:run` real (JDK 21, PostgreSQL 18 local) + frontend real: 3 bots criados (host/porta fictícios, sem servidor Minecraft real disponível no ambiente), 2 iniciados, 1 com `autoReconnect` ligado, macros `antiafk`/`twerk` ativadas, API derrubada via `taskkill` no processo real (não um restart gracioso) e religada do zero — confirmado após o restart: os 3 bots continuam cadastrados com os mesmos `id`s, `autoReconnect`/macros idênticos ao estado anterior, log `RestauradorDeBots` confirmando as 3 restaurações e a tentativa automática de reconexão para o bot com `autoReconnect=true` (falha esperada, host fictício), frontend (`/bots`) exibindo os mesmos 3 bots sem novo cadastro; exclusão de todos os bots ao final confirmada com `204` (incluindo os bots com macro ativa, validando o fix do bug de transação) | ✔ |
+| 2026-07-28 | Milestone 44 (EPIC-PROD-02 "Experiência Operacional", encerramento): mudança de foco dentro da fase "produto utilizável no dia a dia" — de infraestrutura (Milestone 43) para reduzir passos do fluxo operacional existente, sem feature nova, sem alterar arquitetura/domínio/protocolo (projeto C# deliberadamente não consultado). Auditoria prévia (read-only, contra a aplicação real rodando) confirmou o estado antes da mudança: criar um Bot com conta/servidor ainda não cadastrados exigia 3 telas (`/contas-servidores` aba Contas → aba Servidores → `/bots`) mais 2 ações pós-criação separadas (`BotProxyModal`, `/bots/:id/macros`); quando conta/servidor eram informados inline no `POST /bots`, o backend nunca os persistia (ficavam presos ao Bot, `contaId`/`servidorId` nulos no snapshot) — nenhum Caso de Uso de criação existia para Conta/Servidor, a lógica estava inline em `ContaController`/`ServidorController`. **Backend**: `CasoDeUsoCriarConta`/`CasoDeUsoCriarServidor` novos (`application.usecase`, mesmo padrão casca-fina de `CasoDeUsoTrocarProxy`/`CasoDeUsoDefinirAutoReconnect`), registrados em `ConfiguracaoDeCasosDeUso`; `ContaController`/`ServidorController` passam a chamar esses Casos de Uso em vez de montar `Conta.nova`/`PerfilDeServidor.novo` inline (zero mudança de rota/contrato). Dois helpers estáticos novos em `interfaces.rest` (mesmo padrão de `BotLookup`): `MacroAtivacaoSupport.ativar` (extraído de `MacroController.ativar`/`desativar`, agora compartilhado) e `ProxySupport.resolver` (extraído de `BotController.trocarProxy`, agora compartilhado). `CriarBotRequest` ganha 6 campos opcionais aditivos: `nomeServidor`, `proxyHost`/`proxyPort`/`proxyTipo`, `autoReconnect`, `macroInicial`. `BotController.criar` (fluxo composto): quando `contaId`/`servidorId` não vêm na requisição, `resolverCredenciais`/`resolverEndereco` agora persistem uma Conta/`PerfilDeServidor` novos via os Casos de Uso acima (`nomeServidor` opcional, default = `host`) em vez de descartar os dados; proxy é aplicado direto no `EnderecoServidor` da criação (`EnderecoServidor` já suportava proxy no construtor desde sempre, sem mudança de domínio); `autoReconnect`/`macroInicial`, quando informados, disparam `CasoDeUsoDefinirAutoReconnect`/`MacroAtivacaoSupport.ativar` logo após a criação — confirmado que `GerenciadorDeComandos.executar` não tem gate de `EstadoSessao.PLAY`, então a macro inicial ativa mesmo com o bot ainda desconectado. **Frontend**: `BotFormModal` (já usava `Tabs` para alternar conta/servidor existente vs. inline desde o EPIC-FRONT-05) ganha os 3 campos que faltavam no mesmo modal — toggle "Usar proxy" (reaproveita `ProxyFormValues`/`validateProxyForm` de `shared/lib/proxyFormValidation.ts`, zero duplicação de validação), `Select` "Macro inicial" (reaproveita `useCatalogoMacros`, 3º consumidor real do catálogo) e checkbox "Auto reconnect"; `botValidation.ts` estende `BotFormValues`/`validateBotForm` de forma aditiva. `BotTable`: coluna "Macros ativas" ganha `Tooltip` com os nomes reais (antes só mostrava a contagem), sem navegação extra até `/bots/:id/macros`. Campo "versão" (Minecraft) deliberadamente **não** incluído no formulário — decisão validada com o responsável: domínio não tem nenhum conceito de versão (protocolo fixo `domain.protocol.v1_8`), incluir o campo exigiria tocar domínio/protocolo, fora de escopo deste épico (GAP registrado abaixo). Zero DEC nova (consolidação de lógica já existente atrás de Casos de Uso, mesmo padrão arquitetural, não decisão arquitetural nova), zero Port pré-existente alterada, zero contrato REST pré-existente quebrado (só campos aditivos), zero teste automatizado pré-existente quebrado (`ContaControllerTest`/`ServidorControllerTest` continuam verdes via `@SpringBootTest`/`MockMvc`, sem instanciação manual de controller). **Passos eliminados (cenário real medido, conta/servidor 100% novos)**: antes — 3 telas (`/contas-servidores`×2 abas + `/bots`), 3 submits de formulário (Conta, Servidor, Bot) mais 2 ações pós-criação (Proxy, Macro inicial) = **5 submits/ações + 3 navegações de tela**; depois — 1 tela (`/bots`, modal "Novo bot"), **1 submit** cobrindo nickname/senha/servidor/proxy/macro inicial/auto-reconnect, **0 navegações prévias**. Validado manualmente via `mvn spring-boot:run` real (JDK 21, PostgreSQL 18 local) + frontend real (Browser pane): Bot #1 criado com conta ("Steve2") e servidor ("mc.exemplo.com", `nomeServidor` default = host) 100% novos, proxy (SOCKS5), macro inicial (`antiafk`) e auto-reconnect num único `POST /api/v1/bots` → `201`, resposta confirmando `autoReconnect:true`, `proxy` preenchido e `macrosAtivas:["TarefaAntiAFK"]`; Conta e Servidor confirmados persistidos via `GET /contas`/`GET /servidores` (reaproveitáveis); Bot #2 criado reaproveitando a mesma Conta/Servidor pelos `Select` "existente" — `GET /contas`/`GET /servidores` confirmados em `total:2` antes e depois (zero duplicação); ambos os bots excluídos ao final via `ConfirmDialog` (`204`), console do navegador sem erros em nenhum passo. `mvn -o compile` limpo, `tsc -b --noEmit`/`eslint .` sem erros. **3 GAPs registrados para EPIC-PROD-03 (Viewer Operacional)**: (1) campo "versão"/multi-protocolo sem suporte de domínio (protocolo fixo 1.8); (2) vínculo Bot→Conta/Servidor/Proxy não exposto na UI — `Bot` (domínio em memória) não guarda `contaId`/`servidorId`, só o snapshot de persistência guarda, expor exigiria tocar domínio ou I/O extra por bot (`BotResponse` é documentado para não fazer I/O); (3) painel unificado de estado — hoje o estado de um bot continua fragmentado entre listagem/cabeçalho de detalhe/sub-abas (`/bots/:id/console`, `/acoes`, `/inventario`, `/mundo`, `/macros`), fora de escopo deste épico por virar Viewer | ✔ |
+| 2026-07-28 | Milestone 45 (EPIC-PROD-03 "Painel Operacional Unificado", encerramento): resolve o GAP #3 registrado na Milestone 44 (painel unificado de estado). Auditoria prévia (read-only) confirmou que **todo** dado pedido (status/conta/servidor/proxy/autoReconnect/macro ativa/console/vida/fome/coordenadas/dimensão/inventário/equipamento/janela/entidades/jogadores/bloco) já era servido por endpoints REST + eventos WS existentes, cada um já consumido por um hook próprio nas 5 sub-abas de `/bots/:id` (Console/Ações/Inventário/Mundo/Macros) — **épico 100% frontend, zero mudança de backend**. Nova rota `/bots/:id/painel` (`features/bots/details/pages/PainelOperacionalPage.tsx`), inserida como 6ª sub-aba e promovida a `DEFAULT_BOT_DETAILS_TAB` (`services/botDetailsNav.ts` — antes `'console'`, agora `'painel'`; o `index` redirect de `BotDetailsPage` já usa essa constante, sem mudança extra), reúne coluna esquerda (status/conta/servidor/proxy/autoReconnect/macros ativas/últimos comandos, via `useBotDetail`+`useBotConsole`), centro (console completo, componente novo `ConsolePanel` — ver abaixo) e coluna direita (vida/fome/coordenadas/dimensão via `useEstadoMundo`, equipamento via `ItemSlot`, inventário via `InventorySlotGrid`+`useInventarioActions.clicarSlot`, janela condicional) num grid CSS responsivo (`xl:grid-cols-[280px_1fr_320px]`), mais rodapé (entidades próximas/jogadores online via `DataTable`+`useMundoEntidades`, consulta de bloco via `useBlocoLookup`). 100% composição de hooks/componentes das 5 sub-abas já existentes — nenhum hook gerado novo, nenhuma chamada Axios manual nova. Único componente novo de fato: `features/bots/details/components/ConsolePanel.tsx`, extraído do corpo de `ConsolePage` (logs+chat+comando+histórico) pra ser reusado por `ConsolePage` e pelo Painel sem duplicar a composição — ambos os consumidores agora recebem `logs` (`useRealtimeLogs`) e `botConsole` (`useBotConsole`) como props injetadas pelo próprio chamador (nunca chamados dentro do `ConsolePanel`), decisão deliberada pra evitar que o Painel assine os canais WS `bot:{id}` (`"log"`/`"comando"`) duas vezes — a coluna de status e o console central compartilham a mesma instância de `useBotConsole` (mesmo array `history` alimenta os "últimos comandos" à esquerda e o histórico completo no centro). **GAP confirmado, não implementado (proibido pelo escopo — "não adicionar funcionalidade nova ao domínio")**: XP não existe em lugar nenhum do backend — `EstadoMundoResponse.java` não tem campo `xp`, `SessaoDeJogo` nunca decodifica o pacote `SetExperience` (0x1F CB, protocolo 1.8); exibido como "—" com `Tooltip` explicando a ausência, sem parsing de pacote novo. Zero DEC nova, zero endpoint/DTO backend tocado, zero Port alterada. **5 abas antigas tornam-se secundárias** após o Painel — continuam existindo e funcionando sem regressão, mas passam a ser usadas só para ações específicas/avançadas fora do escopo do painel: Ações (formulários completos de movimento/câmera/bloco/entidade), Inventário (controles de transação de janela — `confirmarTransacao`/`limparCursor`/`fecharJanela`, deliberadamente fora do Painel pra manter densidade), Mundo (estado completo com `onGround`/`estaSubmerso`/chunk), Macros (ativação/desativação com argumentos customizados, o Painel só lista as macros já ativas). Console perde o `ConfirmDialog`/botão "Limpar logs" do corpo compartilhado (ficam só na página standalone `ConsolePage`, que continua com o próprio cabeçalho — no Painel a limpeza de logs continua alcançável navegando pra aba Console). 117 testes automatizados (116→117: `BotDetailsPage.test.tsx` ganha `describe('Painel Operacional')` cobrindo render simultâneo de status+console+jogador+entidades e execução de comando via console, reaproveitando os mesmos mocks MSW já existentes no arquivo — nenhum endpoint novo mockado). Validação: `tsc -b --noEmit`/`eslint .` sem erros, `vitest run` 117/117, `mvn -o compile` limpo (build de confirmação, já que o épico não tocou Java); validação manual completa contra backend real (`mvn spring-boot:run`, JDK 21, PostgreSQL 18 local) + frontend real via Browser pane — bot criado reaproveitando Conta/Servidor existentes com macro inicial `antiafk`, `/bots/:id` já abre direto no Painel (link da listagem confirmado apontando pra `/painel`), coluna de status mostrando `TarefaAntiAFK` ativa e o log real `§6AntiAFK §aON` simultaneamente, `GET /estado`/`/mundo/*` retornando `409` (bot desconectado) tratado como `EmptyState` sem quebrar a tela, comando `help` executado via console do Painel com saída completa via WS e "Últimos comandos" atualizado em tempo real na coluna de status sem reload, consulta de bloco alvo retornando `409` tratado graciosamente, navegação pra aba Macros confirmando o mesmo estado (`TarefaAntiAFK`) sem duplicar cadastro, bot de teste excluído ao final, console do navegador sem erros em nenhum passo | ✔ |
+
+| 2026-07-28 | MacroMobSimples (porte de `docs-reescrita/docs/10-Macros/10.1-Macro-Mob-Simplificada.md`, solicitado direto pelo responsável para uso de teste em produção no bot Apolo, sem milestone/épico formal — composição pura sobre capacidade já aprovada, nenhuma decisão arquitetural nova): `domain.bot.TarefaMobSimples` (7 estados lineares — `INICIALIZAR`/`BUSCAR_E_ATACAR_MOB`/`VENDER_ITEMS`/`CHECAR_ESPADA`/`IR_PARA_BAU_ESPADAS`/`TROCAR_ESPADA_NO_BAU`/`RETORNAR_FARM` — fiel à especificação simplificada, não ao legado C#/`TarefaMob`; sem sub-estados de venda por tempo/ciclos, sem contagem fixa de hits, sem checagem de poção/Flame) + `interfaces.comando.ComandoMobSimples` (alias `mobsimples`, mesmo padrão toggle de `ComandoMob`/`ComandoMinerar`, registrado em `ConfiguracaoDeComandos`). Reaproveita 100% de primitivas já existentes: `EntidadesDoMundo.mobMaisProximo` (DEC-38), `interagirComEntidade`/`olharParaEntidade`, `Janela`/Container (DEC-37), `AbridorDeBau`. Duas funções antes privadas de `TarefaMob` extraídas para `MacroUtils` (2º consumidor, mesma regra de três já aplicada nesta base) para eliminar duplicação: `localizarBauProximo` (varredura de baú, agora parametrizada por IDs de bloco) e `localizarItemNaJanela` (generalização de "achar espada substituta na janela aberta"); `TarefaMob` refatorada para reusar ambas, comportamento inalterado (testes pré-existentes continuam verdes). Requisito de resiliência da Seção 4 da especificação implementado literalmente: sem espada substituta disponível no baú, a macro avisa no console do operador e se autorremove (`bot.removerTarefa(this)`, mesmo padrão de `TarefaHerbalismo`) em vez de atacar desarmado — única divergência de robustez em relação a `TarefaMob`, que não trata esse caso. Reconexão/morte resetando a FSM para `INICIALIZAR` **não** implementado (mesma lacuna documentada de `TarefaMob`, que também não reseta — omissão preexistente, não nova). Zero DEC nova, zero Packet/Port/agregado novo, zero interface pré-existente quebrada. 1117→1127 testes automatizados (+10: 8 em `TarefaMobSimplesTest` cobrindo teleporte inicial/busca-e-ataque dentro e fora do raio/transição pra venda com inventário cheio/desativação segura sem espada no baú/troca bem-sucedida de espada, 2 em `ComandoMobSimplesTest` ligar/desligar), 0 falhas, 0 erros, 3 skipped deliberadamente (`mvn -o package`, suíte completa 1127 testes). Não testado ao vivo contra o servidor Craftlandia/bot Apolo nesta sessão (fora do escopo desta implementação) | ✔ |
+
+| 2026-07-28 | Correção do Painel Operacional/Mundo (bug reportado pelo responsável ao vivo: "Entidades próximas" mostrava nome cru da classe Java em vez de nick/nome do mob, inventário só mostrava ID numérico do item sem nome/ícone, sem agrupamento de mob por tipo — sem milestone/épico formal, dado de exibição extraído do legado autorizado): 3 registros novos de dado estático extraídos do `.resx` legado (`Projeto Adv 2.4.5/AdvancedBot.Properties.Resources.resx`, mesma origem/padrão de extração já usado por `RegistroDeBlocos`/`blocks.json`) — `domain.protocol.v1_8.RegistroDeItens` (336 itens de `Resources.items`, id→displayName + variações por damage para os poucos itens cujo nome depende de metadata: carvão/carvão vegetal, dye, cabeças, vaso de flores, peixe, maçã dourada encantada), `domain.bot.RegistroDeMobs` (35 tipos de mob de `Resources.entities`, id byte de `SpawnMobPacket`→displayName), e `advancedbot-frontend/src/features/bots/details/services/itemSpriteCoords.ts` (630 recortes de sprite sheet 16x16, de `itemmap_csv`/`texturemap_csv`, mesmo `.resx`) + `public/sprites/item-icons.png` (spritesheet 1024x320 real do legado, extraído do byte[] serializado do `.resx`, assinatura PNG localizada manualmente dentro do blob de serialização binária do .NET). **Backend**: `EntidadeResponse.de` ganha 2º parâmetro `ListaDeJogadores` — `tipo` agora é nick do jogador (via `ListaDeJogadores.porUuid`, já existia, nunca fora usado por este endpoint) ou nome real do mob (`RegistroDeMobs.nome`), nunca mais `getClass().getSimpleName()`; `ItemStackDto` ganha campo aditivo `nome` (`RegistroDeItens.nome(itemId, damage)`), populado em `ItemStackDto.de` e portanto em todo endpoint que já reusa esse DTO (Inventário/Equipamento/Janela) sem tocar nenhum deles. **Frontend**: `ItemSlot` renderiza o ícone real (crop do spritesheet via `background-position`, `image-rendering: pixelated`, 3x scale) atrás do contador, mais o nome real no tooltip (`formatItemLabel` trocado de `#id:damage` pro `nome` do backend com fallback pro id cru se desconhecido); nova função pura `agruparEntidades` (`features/bots/details/services/entidades.ts`) agrupa por `tipo` (funciona sem campo de categoria explícito — nicks de jogador nunca colidem, só mobs da mesma espécie repetem, mesmo efeito da Craftlandia "Zombie ×5"), reaproveitada por `MundoPage`/`PainelOperacionalPage` (2º consumidor, elimina a duplicata de `ENTIDADE_COLUMNS` que já existia entre as duas). Tipos gerados (`orval`) regenerados contra o backend real rodando localmente (Postgres 18 já ativo) — só `ItemStackDto`/demais modelos ganham o campo aditivo, nenhum contrato quebrado. Zero DEC nova (dado de exibição/protocolo público 1.8, não regra de negócio), zero Port alterada, zero endpoint REST novo. 1127→1131 testes automatizados no backend (+4: `RegistroDeItensTest`/`RegistroDeMobsTest`/`EntidadeResponseTest`/`ItemStackDtoTest`) e 120→129 no frontend (+9: `entidades.test.ts`/`itemStack.test.ts`), 0 falhas, `mvn -o package`/`tsc -b --noEmit`/`eslint .`/`vitest run` limpos. Validação manual parcial: `mvn spring-boot:run` real + frontend real via Browser pane confirmaram o Painel do bot `Solk`/Apolo (`apolo.clmc.com.br:3636`, desconectado) sem erro de console e com `ErrorState`/`EmptyState` corretos nas 3 seções (bot sem sessão ativa, `409` esperado); **não validado contra dado real de mob/inventário em jogo** — os 2 bots persistidos (Solk/Apolo, Apolo é o mesmo citado pelo responsável para o teste de farm multi-dias da `MacroMobSimples`) estavam desconectados nesta sessão, conectar um bot real a um servidor ao vivo só para validar uma correção de UI não foi feito sem autorização explícita | ✔ |
+
+| 2026-07-28 | Tela de configuração de macro (pedido direto do responsável: mudar as homes da `MacroMobSimples` sem recompilar e conferir a configuração atual de um bot, com decisão explícita de perfil compartilhado + framework genérico para qualquer macro futura, não só MobSimples — sem milestone/épico formal, novo agregado com identidade própria seguindo o mesmo idioma já usado por Conta/PerfilDeServidor/EPIC-APP1): novo agregado `domain.bot.ConfiguracaoDeMacro` (id/nome/tipoDeMacro/parametros — mapa livre chave→valor, não campos tipados, porque o mesmo agregado serve qualquer `TarefaContinua` que implemente a nova interface `domain.bot.TarefaComConfiguracao`) + `application.port.RepositorioDeConfiguracoesDeMacro` + adapter JPA (`ConfiguracaoDeMacroJpaEntity`/`ConfiguracaoDeMacroParametroJpaEntity`, linha filha por par chave/valor, mesmo padrão flat de `bot_macros`, `@Transactional` explícito no delete derivado — mesma classe de bug já corrigida na Milestone 43) + migration `V3__configuracoes_de_macro.sql` + 2 Casos de Uso finos (criar/atualizar) + `ConfiguracaoDeMacroController` (CRUD completo, `/api/v1/configuracoes-macro`, com `PUT` de verdade, diferente de Conta/Servidor que não têm). `TarefaMobSimples` ganha `Configuracao` (record aninhado: `homeMob`/`homeBau`/`cmdVenderMobs`, default = comportamento hardcoded de antes) + construtor aceitando `Configuracao`+`UUID` opcional do perfil aplicado; `ComandoMobSimples` ganha `RepositorioDeConfiguracoesDeMacro` como colaborador (mesmo idioma de `argumentos[0]` já usado por `ComandoAntiAFK`/delay, mas resolvendo um perfil persistido por id em vez de um valor cru). `MacroResponse` ganha `configuracaoDeMacroId`/`configuracaoAtual` (populados via `instanceof TarefaComConfiguracao`, nenhuma outra macro afetada); `AtivarMacroRequest` ganha `configuracaoDeMacroId` opcional (prioridade sobre `argumentos` em `MacroController.ativar`). **Bug real encontrado e corrigido durante a validação manual, não coberto por nenhum teste automatizado até então**: `CatalogoController.CLASSES_DE_MACRO` (allowlist hardcoded de `GET /api/v1/macros`) nunca foi atualizada quando `ComandoMobSimples` foi registrado em sessão anterior — a macro funcionava perfeitamente via `GerenciadorDeComandos`/`POST /macros/mobsimples`, mas ficava invisível em qualquer tela que dependesse do catálogo (Select de ativação em `MacrosPage`, Select de `tipoDeMacro` na tela nova); corrigido adicionando `"ComandoMobSimples"` ao `Set`, `CatalogoControllerTest` novo (regressão). **Frontend**: nova feature `features/configuracoes-macro/` (`ConfiguracoesMacroPage` — CRUD com editor genérico de linhas chave/valor para "parametros", sem formulário tipado por macro; rota `/configuracoes-macro` + item na Sidebar), `MacrosPage` ganha Select opcional de perfil (filtrado por `tipoDeMacro`= alias escolhido, só aparece depois de escolher a macro — bug de UX encontrado e corrigido na própria validação manual: mostrava perfis de qualquer tipo antes de qualquer macro ser selecionada) e a tabela de macros ativas ganha colunas "Perfil aplicado" (resolve id→nome) e "Configuração atual" (valores já resolvidos, com fallback pro padrão). **Bug de correção de estado (React) encontrado e corrigido durante os testes automatizados, não na validação manual**: primeira versão do `ConfiguracaoDeMacroFormModal` inicializava `tipoDeMacro` num `useState` no mount a partir do catálogo (query assíncrona separada, sem ordem garantida) e sincronizava depois via `useEffect` chamando `setState` direto no corpo do efeito — ESLint (`react-hooks/set-state-in-effect`) rejeitou como anti-padrão de cascata de renders; corrigido derivando o valor efetivo a cada render (`tipoDeMacroEscolhido ?? tiposDeMacroDisponiveis[0] ?? ''`), sem efeito nenhum. Tipos gerados (`orval`) regenerados contra o backend real — como o novo controller é alfabeticamente anterior a `BotController`/`LogController`/`MacroController` na spec OpenAPI, os sufixos numéricos de colisão de nome do Spring (`useListar3`→`useListar4`, `useListar4`→`useListar5`, `useListar5`→`useListar6`, `useCriar2`→`useCriar3`, `useDetalhar2`→`useDetalhar3`, `useRemover3`→`useRemover4`) mudaram em cascata para TODOS os hooks pré-existentes que os referenciavam (`useBotDetail`/`useBotMacros`/`useRealtimeLogs`/`useBotActions`/`useBotList`/`useBotMutations`) — efeito colateral mecânico já esperado ao acrescentar um controller cedo no alfabeto, sem nenhuma mudança de comportamento real, só renomeação. Zero DEC nova (dado de configuração de exibição/operação, não regra de negócio nova), zero Port pré-existente alterada, zero contrato REST pré-existente quebrado (só campos aditivos em `MacroResponse`/`AtivarMacroRequest`). 1154 testes automatizados no backend (1131→1154, +23: `ConfiguracaoDeMacroControllerTest`/`RepositorioDeConfiguracoesDeMacroJpaTest`/`CatalogoControllerTest` novos, mais testes novos em `TarefaMobSimplesTest`/`ComandoMobSimplesTest`/`MacroResponseTest`) e 133 no frontend (129→133, +4: `ConfiguracoesMacroPage.test.tsx`), 0 falhas, `mvn -o package`/`tsc -b --noEmit`/`eslint .`/`vitest run` limpos. Validado manualmente de ponta a ponta contra o backend real (`mvn spring-boot:run`, Postgres 18 local) + frontend real via Browser pane: perfil "Craftlandia - Apolo" (`homeMob=/home apolomob`, `homeBau=/home apolobau`) criado na tela nova, aplicado na ativação da `MobSimples` no bot Apolo (`apolo.clmc.com.br:3636`, desconectado nesta sessão) via o Select de perfil, tabela de macros ativas confirmando "Perfil aplicado: Craftlandia - Apolo" e "Configuração atual: homeBau=/home apolobau, homeMob=/home apolomob, cmdVenderMobs=/vender mobs" (mistura correta de valor customizado + default), macro desativada e perfil de teste removido ao final (`DELETE` real, `204`), console do navegador sem erros novos em nenhum passo | ✔ |
+
+| 2026-07-29 | EPIC-VIEWER-01 (evolução do Painel Operacional, escopo restrito pelo responsável a um único bot — Swarm Bar/visão multi-bot deliberadamente fora desta sessão): auditoria prévia obrigatória (contra código atual, não contra a proposta original em `docs-reescrita/docs/12-Interface/08-Proposta-Viewer-Operacional.md`) confirmou que o Painel Operacional (Milestone 45) já reunia todo o estado pedido (status/conta/servidor/proxy/autoReconnect/macros ativas/últimos comandos/console/vida/fome/coordenadas/dimensão/inventário/equipamento/janela/entidades/jogadores/bloco) e que a correção de exibição de 2026-07-28 já resolvia nome real de mob/jogador e ícone/nome real de item — nenhuma melhoria proposta para este épico já estava implementada, e nenhuma se tornou obsoleta; as lacunas reais eram só: `msDesdeUltimoKeepAlive` (`BotResponse`/`EstadoMundoResponse`) nunca lido em nenhum componente, nenhum indicador de "travamento aparente", direção (yaw/pitch) nunca exibida (só coordenadas x/y/z). **100% frontend, zero mudança de backend, zero endpoint/evento WS novo, zero DEC.** Entregue: `features/bots/details/services/painelSaude.ts` novo (puro, sem I/O) com `classificarSaudeConexao`/`classificarAtividade`/`classificarTravamento`/`formatMsAtras` — thresholds heurísticos documentados em comentário, não vêm do backend; `features/bots/details/hooks/useUltimaAtividade.ts` novo, captura o campo `timestamp` do envelope WS `EventoDeBot` (já emitido pelo backend, já trafegando por `wsBus`, nunca antes capturado por `useBotConsole`/`useRealtimeLogs`) no mesmo canal `bot:{id}` já aberto por `useBotEventsSocket` — nenhuma assinatura WS nova; tick de 1s interno para manter "tempo desde a última atividade" andando sem depender de evento novo (`Date.now()` lido só dentro de efeitos, por causa da regra de pureza do React — duas iterações até o ESLint parar de reclamar: 1ª tentativa chamava `Date.now()` direto no corpo do hook, 2ª chamava `setState` síncrono no corpo do efeito, versão final usa `useState(() => Date.now())` como valor inicial + `setInterval` dentro do efeito). `PainelOperacionalPage.tsx`: nova linha de 3 `MetricCard` (componente já existente do Dashboard, reaproveitado sem alteração) — Saúde de conexão, Atividade recente, Travamento aparente — e campo "Direção (yaw/pitch)" somado ao card Jogador já existente; nenhum componente novo de UI, nenhuma página nova, nenhuma sub-aba nova. GAPs documentados, não implementados: `msDesdeUltimoKeepAlive` continua sendo snapshot de rede, não RTT real (mesma limitação já coberta por DEC-41); "Travamento aparente" é heurística client-side (macro ativa + sessão conectada + nenhum evento WS há mais de 30s), marcada como estimativa explícita na UI (`hint`), sem confirmação de backend; Swarm Bar/visão multi-bot permanece fora de escopo. 17 testes automatizados novos no frontend (`painelSaude.test.ts`, funções puras) mais extensão do `describe('Painel Operacional')` em `BotDetailsPage.test.tsx` cobrindo os 3 indicadores e o novo campo de direção — 151/151 testes passando (30 arquivos). Validação: `tsc -b --noEmit`/`eslint .` sem erros (1 aviso pré-existente em `BotProxyModal.tsx`, não relacionado), `vitest run` 151/151, `vite build` sucesso; `mvn -o compile` do backend limpo (build de confirmação, nenhum arquivo Java tocado). Validação manual contra backend real (`mvnw spring-boot:run`, JDK 21, PostgreSQL 18 local) + frontend real (Vite dev server) via Browser pane: Painel Operacional do bot `Solk` (`apolo.clmc.com.br:3636`, já persistido de sessão anterior, desconectado nesta sessão) mostrando corretamente os 3 novos indicadores no estado desconectado ("Desconectado"/"Sem eventos ainda"/"N/A — Sem macro ativa ou bot desconectado") e o card Jogador em `EmptyState` (coerente, sem sessão ativa — campo Direção não aparece), sem erros de console. **Validação com bot conectado a servidor Minecraft real não foi executada nesta sessão** — mesmo critério já aplicado na correção de 2026-07-28 (conectar a conta `Solk` a um servidor de terceiros ao vivo só para validar UI não foi feito sem confirmação explícita adicional do responsável neste turno); estados "Saudável"/"Ativo agora"/"Possível travamento" ficam cobertos pelos 18 testes unitários de `painelSaude.test.ts`, mas não pela observação ao vivo de um bot em jogo | ✔ |
+
+| 2026-07-29 | EPIC-VIEWER-02 (Estágio 1, Timeline de Eventos do Painel Operacional, incorporada ao Painel existente, sem página nova): auditoria prévia confirmou as fontes de evento já disponíveis no frontend — canal WS por bot (`bot:{id}`, aberto por `useBotEventsSocket`) com só 3 tipos reais emitidos pelo backend (`"log"` de `SaidaDoOperador`, `"estado"` de mudança de `EstadoExecucao` — não é posição/mundo, confirmado em `GerenciadorDeBots.registrar` — e `"comando"` de `ComandoExecutadoPayload`, também usado por ativação/desativação de macro via `MacroAtivacaoSupport.ativar`, sem tipo próprio, GAP herdado do doc 08 §1.1); `useBotConsole`/`useRealtimeLogs` já consomem `"comando"`/`"log"` mas descartam o `timestamp` do envelope; `wsBus` já emite um canal `status` (transporte do `ManagedSocket`: `connecting`/`open`/`closed`/`reconnecting`) desde o EPIC-APP1, nunca antes consumido por nenhum hook de domínio — única fonte real de conexão/desconexão/reconexão disponível hoje (reflete o transporte WS do navegador, não o `EstadoDeSessao` do bot no Minecraft, mesma distinção já registrada para `msDesdeUltimoKeepAlive`); confirmado que `Alert`/`ScrollArea` não existem no Design System (só `Toast`/`EmptyState`/`ErrorState`/`ErrorBoundary` em `feedback/`), substituídos por composição de tokens de cor já usados e pelo mesmo padrão `overflow-y-auto` do `ConsoleLogViewer`, sem construir componentes novos fora do escopo (mesmo critério do `ProgressBar` recusado no OPX-05); nenhuma Timeline/histórico cronológico existia antes ("últimos comandos" do Painel é só os 5 últimos itens de `botConsole.history`, sem cruzamento com log/estado/conexão). **100% frontend, zero mudança de backend, zero endpoint/evento WS novo, zero DEC, zero migração de polling para WebSocket.** Entregue: `features/bots/details/services/timelineEventos.ts` novo (puro) — tipos (`TimelineEntrada`, tipo `log`/`comando`/`estado`/`conexao`), classificação de severidade por texto (`classificarSeveridadeDeTexto`, heurística sobre `falha`/`erro`/`exception`/`§4`/`§c` etc., mesmo espírito de `painelSaude.ts`) e por status de conexão (`classificarSeveridadeDeConexao`), buffer FIFO limitado (`adicionarEntrada`, `TIMELINE_MAX_ENTRADAS = 200` — evita crescimento infinito de memória); `features/bots/details/hooks/useBotTimeline.ts` novo, assina `wsBus` `message` (`bot:{id}`, tipos `log`/`estado`/`comando`) e `wsBus` `status` (mesmo canal) sem abrir nenhuma conexão WS nova (reaproveita o socket já aberto por `useBotEventsSocket`), reseta o buffer ao trocar de bot via ajuste de estado durante o render (padrão React recomendado, não num efeito — ESLint `react-hooks/set-state-in-effect` rejeitou a primeira versão que chamava `setEntradas([])` dentro do efeito); `features/bots/details/components/EventTimeline.tsx` novo (apresentacional, recebe `timeline` injetado pelo chamador, mesmo padrão de `ConsolePanel`) — filtro por tipo (`Select` existente), botão "Limpar" (`Button` ghost existente), aviso fixo de "histórico desta sessão" (tokens de cor existentes, não um `Alert` novo), lista com `role="log"` (semântica ARIA de feed de mensagens) reaproveitando o padrão de scroll do `ConsoleLogViewer`, `EmptyState`/`Badge` existentes para vazio/severidade. `PainelOperacionalPage.tsx`: `EventTimeline` inserido em novo `Card` "Timeline de eventos" logo abaixo do Console, mesma coluna central — nenhuma página nova, nenhuma sub-aba nova. GAPs documentados, não implementados: macro ativa/desativa continua sem tipo WS próprio (aparece como `"Comando"` genérico); `conexao` reflete transporte WS do navegador, não sessão real do bot; severidade é heurística de texto, não categoria do backend; sem persistência (perdido a cada reload por design do Estágio 1, aviso fixo avisa isso na própria UI); `Alert`/`ScrollArea` continuam inexistentes como átomos, substituídos por composição. 12 testes automatizados novos no frontend (`timelineEventos.test.ts`, funções puras) mais um teste novo em `BotDetailsPage.test.tsx` cobrindo ordem cronológica, filtro por tipo e "Limpar" (usando `role="log"` pra escopar a busca e não colidir com o texto duplicado que também aparece no Console) — 164/164 testes passando (31 arquivos). Validação: `tsc -b --noEmit`/`eslint .` sem erros (mesmo warning pré-existente em `BotProxyModal.tsx`), `vitest run` 164/164, `vite build` sucesso; `mvn -o compile` do backend limpo (nenhum arquivo Java tocado). Validação manual contra backend real (`mvnw spring-boot:run`, JDK 21, PostgreSQL 18 local) + frontend real via Browser pane: comando `help` executado pelo Console do bot `Solk` (desconectado) — Timeline mostrou, em ordem, a entrada "Comando" (`help → SUCESSO`) seguida da entrada "Console" com a saída completa, ambas com horário real; indicador "Atividade recente" (EPIC-VIEWER-01) atualizou para "Ativo agora" no mesmo instante, confirmando dois indicadores diferentes reaproveitando o mesmo evento WS; filtro "Estado" escondeu corretamente as entradas existentes (`EmptyState` "Nenhum evento desse tipo nesta sessão"); "Limpar" esvaziou o buffer (`EmptyState` "Nenhum evento chegou ainda nesta sessão" de volta); sem erros de console em nenhum passo. **Validação durante execução de macro contra servidor Minecraft real não foi executada** — nenhum bot estava conectado a um servidor real nesta sessão; conectar a conta `Solk` a um servidor de terceiros ao vivo só para esta validação não foi feito sem confirmação explícita adicional do responsável neste turno (mesmo critério de sessões anteriores) — o cruzamento cronológico comando→log já foi confirmado com o bot desconectado, e a emissão do evento `"comando"` por ativação de macro real fica coberta pela leitura de código (`MacroAtivacaoSupport.ativar`), não pela observação ao vivo | ✔ |
+
+| 2026-07-29 | EPIC-VIEWER-04 (Etapa 1, infraestrutura mínima do Viewer 2D dentro do Painel Operacional — nova aba "Debug 2D", plano top-down, marcador de posição e seta de direção; roadmap completo do épico apresentado numa sessão anterior de planejamento, esta é só a primeira etapa isolada dele): auditoria prévia confirmou que posição/direção já existiam e já eram exibidas em texto (`EstadoMundoResponse.x/y/z/yaw/pitch` via `GET /estado`, `hooks/useEstadoMundo.ts`, polling 3s, sem WS dedicado — GAP §8 do doc 06, herdado); `pages/MundoPage.tsx` confirmado como referência de padrão de loading/erro/vazio (`Skeleton`/`ErrorState`/`EmptyState`), não duplicado; nenhum componente de canvas/SVG de mundo existia em `shared/components` (busca direta antes de implementar) — único precedente de SVG customizado no projeto é `features/dashboard/components/MetricTrendChart.tsx` (sparkline sem lib externa), confirmando SVG sem biblioteca nova como abordagem já aceita (arquitetura congelada); abas de `BotDetailsPage` confirmadas como rotas aninhadas em `services/botDetailsNav.ts` (`BOT_DETAILS_TABS`) + `app/router/router.tsx` (lazy import por aba), único ponto de integração necessário, sem duplicar `useBotEventsSocket` (continua aberto uma única vez no layout pai). **100% frontend, zero mudança de backend, zero endpoint/evento WS novo, zero polling adicional, zero DEC.** Entregue: `features/bots/details/components/BotDebugViewer2D.tsx` novo (apresentacional, puro) — SVG fixo (`viewBox` 300x300), plano top-down centrado no bot (sem grid de blocos), marcador de posição (círculo central), seta de direção calculada do `yaw` (convenção Minecraft, vetor de planta `(dx,dz) = (-sin(yaw), cos(yaw))`, documentado em comentário); `pitch` sem representação visual em top-down, exibido só como texto junto de x/y/z; prop `overlays?: ReactNode` (slot vazio nesta etapa, não usado) preparando o mesmo `<svg>`/sistema de coordenadas para camadas futuras (blocos/entidades/path) sem recriar a projeção. `features/bots/details/pages/DebugViewerPage.tsx` novo — reaproveita `useEstadoMundo` sem alteração, mesmos estados de loading/erro/vazio do Design System já existentes. `services/botDetailsNav.ts`: nova entrada `{ key: 'debug-2d', label: 'Debug 2D' }`. `app/router/router.tsx`: rota filha `debug-2d`, lazy-loaded, mesmo padrão das demais abas. Nenhum arquivo de backend tocado — nenhum DTO/endpoint/evento WS/contrato REST ou WS alterado. Escopo desta etapa deliberadamente não inclui: blocos, entidades, raycast, mineração, combate, follow, overlays de alcance/raio, timeline, viewer 3D — todos ficam para etapas seguintes do mesmo épico. Teste novo `describe('Debug 2D')` em `BotDetailsPage.test.tsx` cobrindo o SVG (`role="img"`, nome acessível) e os textos de posição/yaw/pitch a partir do mesmo mock de `GET /estado` já usado pelas demais abas — 165/165 testes passando (31 arquivos, +1 novo). Validação: `tsc -b --noEmit`/`eslint .` sem erros (mesmo warning pré-existente em `BotProxyModal.tsx`), `vitest run` 165/165, `vite build` sucesso (novo chunk lazy `DebugViewerPage-*.js`); `mvn -o compile` do backend limpo (nenhum arquivo Java tocado). Validação manual via Browser pane (Vite dev server local, sem backend Java rodando nesta sessão): navegação direta a `/bots/{id}/debug-2d` confirma a aba na navegação, página monta sem exceção JS (console sem erros), card exibe estado de carregamento/vazio esperado na ausência de backend. **Validação contra servidor Minecraft real (conectar bot, mover personagem, girar câmera, confirmar posição/direção acompanhando ao vivo) não foi executada nesta sessão** — nenhum backend Java nem bot conectado a um servidor real estava disponível no ambiente desta sessão (mesmo critério de transparência das entradas anteriores); fica como validação pendente a ser executada pelo responsável com o backend rodando e um bot conectado a um servidor real | ✔ |
+
+| 2026-07-29 | EPIC-VIEWER-04 (Etapa 2, contexto visual ao redor do bot no Debug 2D — grade de blocos pequena e fixa + entidades próximas, somado à posição/direção da Etapa 1, arquitetura da Etapa 1 não refeita, só estendida): auditoria prévia confirmou `BotDebugViewer2D.tsx` (SVG puro, marcador+seta de yaw) já preparado com prop `overlays?: ReactNode` (slot vazio) pra camadas futuras; `hooks/useMundoEntidades.ts` já existente (usado por `MundoPage`, `GET /mundo/entidades`, polling 5s) confirmado como fonte pronta de entidades próximas; leitura direta de `MundoController.java` confirmou que `GET /mundo/entidades` (sem filtro `tipo`) já devolve mobs E jogadores remotos com `x/y/z` reais via `EntidadeResponse.de` — **sem GAP** para entidades; mesma leitura confirmou que `GET /mundo/jogadores` devolve só `JogadorResponse{nome,nomeDeExibicao}`, **sem posição** — não usado pra plotar nada, GAP documentado pra não ser reintroduzido por engano em telas futuras; confirmado (de novo) que `GET /mundo/bloco` continua só pontual, sem endpoint em lote/grade — GAP já conhecido da proposta original (doc 08 §5), grade implementada com N chamadas paralelas ao endpoint pontual, raio pequeno (2) por causa desse custo, decisão já prevista no roadmap da etapa. **100% frontend, zero mudança de backend, zero endpoint/evento WS novo, zero DEC.** Entregue: `features/bots/details/services/debugViewerGrade.ts` novo (puro) — `gerarCoordenadasDeGrade` enumera as 25 células da grade (`GRID_RAIO = 2`) ao redor da posição truncada do bot, com offset `dx/dz` em blocos; `features/bots/details/hooks/useBlocosGrade.ts` novo — busca cada célula em paralelo (`Promise.all` sobre o fetcher `bloco` já gerado pelo orval, sem endpoint novo), agregada numa única `useQuery` com chave nas coordenadas truncadas do centro (reaproveita cache enquanto o bot não atravessa pra outro bloco), `refetchInterval` 5s (mesma cadência de `useMundoEntidades`); `BotDebugViewer2D.tsx` ganhou prop aditiva `background?: ReactNode` (renderizada antes da seta/marcador, blocos ficam visualmente atrás) e passou a exportar `GRID_CELL_PX`/`VIEWER_CENTER_PX` pras camadas novas reaproveitarem a mesma projeção sem duplicar conta — `overlays` da Etapa 1 preservado, agora usado pelas entidades (primeiro plano); `DebugViewerGradeLayer.tsx`/`DebugViewerEntidadesLayer.tsx` novos (apresentacionais) — um `<rect>` por célula (sólido vs. vazio por cor, `<title>` com coordenada/blockId) e um `<circle>` por entidade (cor distinta do bot, `<title>` com tipo/id); `DebugViewerPage.tsx` passou a chamar `useBlocosGrade`/`useMundoEntidades` e compor as camadas, mais legenda mínima (4 itens, sem componente novo de Design System) e aviso de texto se a grade falhar, sem travar a exibição de posição/direção. Nenhum arquivo de backend tocado. 5 testes automatizados novos em `debugViewerGrade.test.ts` (funções puras) mais um teste novo em `BotDetailsPage.test.tsx` (`describe('Debug 2D')`) cobrindo grade completa (≥25 `<rect>`) e marcador de entidade (`<circle fill="var(--color-warning)">`) e legenda — 171/171 testes passando (32 arquivos). Validação: `tsc -b --noEmit`/`eslint .` sem erros (mesmo warning pré-existente em `BotProxyModal.tsx`), `vitest run` 171/171, `vite build` sucesso; `mvn -o compile` do backend limpo (nenhum arquivo Java tocado). Validação manual via Browser pane (Vite dev server local, sem backend Java rodando nesta sessão): navegação direta a `/bots/{id}/debug-2d` confirma a aba, página monta sem exceção JS, comportamento correto de estado vazio/erro na ausência de backend. **Validação contra servidor Minecraft real (mover o bot, mover entidades próximas, confirmar grade e marcadores acompanhando) não foi executada nesta sessão** — mesmo critério já registrado na Etapa 1 (nenhum backend Java nem bot conectado a servidor real disponível no ambiente); fica acumulada como validação pendente junto da Etapa 1 — critério de aceite conjunto: mover o bot desloca a grade junto (célula do bot sempre no centro) e mover uma entidade real move o marcador correspondente dentro do polling de 5s | ✔ |
+
+| 2026-07-29 | EPIC-VIEWER-04 (Etapa 3, raycast real do domínio no Debug 2D — endpoint `GET /mundo/raycast` reaproveitando `SessaoDeJogo.tracarRaioParaBlocos`, linha do raio + contorno do bloco atingido + aresta da face; auditoria técnica feita numa sessão anterior sem código, esta sessão implementou sobre as conclusões já obtidas sem repetir a análise): zero algoritmo de raycast novo, zero alteração em `Mundo`/`SessaoDeJogo`/`TarefaMineracao`/macros, zero cálculo geométrico de raio no frontend, zero DEC. **Backend**: `interfaces/rest/dto/RaycastResponse.java` novo (record `atingiu,x,y,z,face,blockId,metadata,solido,distancia,alcance`, campos de alvo boxed/nuláveis, `alcance` sempre presente) com fábricas `semAlvo(alcance)` e `de(ResultadoDoRaio,Bloco,SessaoDeJogo,alcance)` (`distancia` = pés do bot → canto do bloco, só informativa, documentado que não é a distância usada pelo raycast em si); `MundoController.java` ganhou `GET /mundo/raycast` com `ALCANCE_RAYCAST=6.0` (mesmo valor já usado por `TarefaMineracao`/`TarefaMob`/`TarefaHerbalismo`/`TarefaAutoFish`, confirmado na auditoria — Viewer mostra exatamente o que as macros enxergam) — corpo do método só chama `sessaoDeJogo.tracarRaioParaBlocos(ALCANCE_RAYCAST)` e `mundo.blocoEm(...)` (mesma chamada de `GET /mundo/bloco`), nenhuma linha de domínio tocada; 409 sem sessão PLAY automático via `GlobalExceptionHandler` já existente, nenhum tratamento novo. **Frontend**: tipos regenerados via `npm run generate:api` contra backend real rodando localmente (`RaycastResponse`/`useRaycast` novos); `hooks/useDebugViewerRaycast.ts` novo (só `useRaycast` gerado + polling 5s, mesma cadência de `useMundoEntidades`/`useBlocosGrade`); `components/DebugViewerRaycastLayer.tsx` novo (apresentacional) — linha tracejada do centro até o bloco atingido, contorno do bloco (mesmo `GRID_CELL_PX` da Etapa 2, cor `--color-danger`), aresta da face só pras 4 faces horizontais (convenção `PlayerDiggingPacket`/`PlayerBlockPlacementPacket`, topo/base sem aresta representável em top-down, "quando possível"), retorna `null` quando `atingiu=false` — toda a matemática é projeção mundo→tela igual às camadas da Etapa 2, nenhum cálculo de raio; `BotDebugViewer2D.tsx` teve só `VIEW_SIZE` 300→520 (`CENTER` junto) porque o alcance real (6 blocos × 40px = 240px) não cabia no canvas dimensionado pra grade raio-2 da Etapa 2 — único ajuste, `GRID_CELL_PX`/projeção/`background`/`overlays`/camadas existentes intactos; `DebugViewerPage.tsx` compôs a camada nova dentro do slot `overlays` já existente (fragment junto de `DebugViewerEntidadesLayer`), legenda ganhou 1 item novo. Nenhum GAP de backend novo (auditoria prévia já havia confirmado que todo dado necessário já existia). `RaycastResponseTest` (2 casos) + `MundoControllerTest` novo (3 casos, sem contexto Spring, sessão de jogo real construída como em `SessaoDeJogoTest`, só `GerenciadorDeBots` mockado — acerto, sem alvo, `IllegalStateException` sem sessão) — `mvn -o test`: **1168 testes, 0 falhas, 3 skipped pré-existentes**, nenhuma regressão em `TarefaMineracaoTest`/`SessaoDeJogoTest`/`MundoTest`. `DebugViewerRaycastLayer.test.tsx` novo (3 casos) + 2 casos novos em `BotDetailsPage.test.tsx` (`describe('Debug 2D')`, com/sem alvo via mock MSW) — `vitest run`: **176/176 testes passando** (33 arquivos). `tsc -b --noEmit`/`eslint .` sem erros (mesmo warning pré-existente em `BotProxyModal.tsx`), `vite build` sucesso, `mvn -o compile` limpo. Validação manual contra backend real (`mvnw spring-boot:run`, JDK 21 — `JAVA_HOME` precisou ser setado manualmente nesta sessão, ambiente sem JDK no PATH por padrão —, PostgreSQL 18 local, bot `Solk` persistido restaurado desconectado): confirmado via `curl` direto que `GET /mundo/raycast` retorna `409` real com o bot desconectado; confirmado via Browser pane que a aba Debug 2D contra o backend real (não mock) monta sem erro de console, a query de raycast dispara e falha com 409 visível em `read_network_requests`, e a UI degrada corretamente pro `EmptyState` sem travar. **Validação com bot em sessão PLAY real (olhando pra parede/céu, girando em quinas, comparando bloco destacado com bloco quebrado pela mineração) não foi executada** — nenhum bot conectado a servidor Minecraft real nesta sessão (mesmo critério de todas as sessões anteriores); fica acumulada com as pendências de validação ao vivo das Etapas 1 e 2 | ✔ |
+
+| 2026-07-29 | EPIC-VIEWER-04 (Etapa 4, caminho real do domínio no Debug 2D — endpoint `GET /mundo/caminho-atual` reaproveitando `SessaoDeJogo.caminhoAtual()`/`GuiaDeCaminho`, polyline do trajeto calculado pelo pathfinding; auditoria rápida pedida explicitamente no início desta sessão, sem reconsultar o projeto C#): zero algoritmo de pathfinding novo, zero alteração em `BuscadorDeCaminho`/decisões de busca/macros, zero recálculo de caminho no frontend, zero DEC. Auditoria confirmou: caminho ativo mora em `SessaoDeJogo.caminhoAtual` (campo `volatile GuiaDeCaminho`, getter/setter/`limparCaminho()` já públicos, fiel a `MinecraftClient.CurrentPath` do legado); produzido por `BuscadorDeCaminho` (A*) via `Mundo.criarCaminhoPara`/`GuiaDeCaminho.criar`, consumido por `ComandoGoto`/`TarefaFollow`/`ComandoPortal`; atualizado a cada tick por `MotorDeTick` (`GuiaDeCaminho.tick()`, remove via `limparCaminho()` quando `finalizado()`); estrutura é `List<PontoDeCaminho>` (`x,y,z` inteiros, getters públicos) sem getter de leitura da lista completa (só `tick()`/`indiceMaisProximo()` liam internamente); nenhum evento WS de caminho existe (`NotificadorDeEventos` sem tipo dedicado, GAP aceito, fora de escopo desta etapa). **Backend**: `GuiaDeCaminho.java` ganhou só `pontos()` (retorna `List.copyOf(pontos)`, cópia defensiva porque a lista original é mutada por `tick()`) — única alteração no domínio, leitura pura, nenhuma decisão de busca tocada; `interfaces/rest/dto/PontoCaminhoResponse.java` e `CaminhoAtualResponse.java` novos (records, fábrica `de()`, mesmo padrão de `RaycastResponse`/`PosicaoResponse`) — `caminho == null` vira `{caminhoDisponivel: false, pontos: []}`, mesmo critério de nulidade de `RaycastResponse.semAlvo`; `MundoController.java` ganhou `GET /mundo/caminho-atual` — corpo só chama `sessao(id).caminhoAtual()`, nenhuma linha de domínio tocada; 409 sem sessão PLAY automático via `GlobalExceptionHandler` já existente (`IllegalStateException` → `HttpStatus.CONFLICT`), nenhum tratamento novo. **Frontend**: tipos regenerados via `npm run generate:api` contra backend real rodando localmente (`CaminhoAtualResponse`/`PontoCaminhoResponse`/`useCaminhoAtual` novos; campos `x/y/z` de `PontoCaminhoResponse` saíram opcionais no OpenAPI gerado, tratados com guarda `!== undefined` no componente, mesmo padrão de `DebugViewerEntidadesLayer`); `hooks/useDebugViewerCaminho.ts` novo (só `useCaminhoAtual` gerado + polling 5s, mesma cadência de `useDebugViewerRaycast`/`useMundoEntidades`); `components/DebugViewerCaminhoLayer.tsx` novo (apresentacional) — `<polyline>` ligando os pontos já projetados pro sistema de tela existente (`GRID_CELL_PX`/`VIEWER_CENTER_PX`), cor `--color-success` (nova na paleta de camadas, distinta de `--color-danger` do raycast e `--color-warning` das entidades), retorna `null` quando `caminhoDisponivel=false` ou `pontos` vazio — nenhum cálculo de rota, só projeção; `BotDebugViewer2D.tsx`/`DebugViewerGradeLayer.tsx`/`DebugViewerEntidadesLayer.tsx`/`DebugViewerRaycastLayer.tsx` não tocados (camadas existentes intactas, confirmado por regressão dos testes já existentes); `DebugViewerPage.tsx` compôs a camada nova dentro do slot `overlays` já existente, junto de raycast/entidades, e a legenda ganhou 1 item novo ("Caminho"). Nenhum GAP de backend novo. `MundoControllerTest` ganhou 3 casos novos (com caminho ativo — terreno plano reaproveitando o cenário de `MundoTest.criarCaminhoParaDeveEncontrarCaminhoRetoEmFaixaPlana`, sessão de jogo real, só `GerenciadorDeBots` mockado —, sem caminho ativo, `IllegalStateException` sem sessão) — `mvn -o test`: **1171 testes, 0 falhas, 3 skipped pré-existentes**, nenhuma regressão em `TarefaFollowTest`/`ComandoGotoTest`/`ComandoPortalTest`/`SessaoDeJogoTest`/`MundoTest`. `DebugViewerCaminhoLayer.test.tsx` novo (3 casos: sem caminho disponível, caminho disponível mas pontos vazios, polyline com pontos projetados corretamente) + 3 casos novos em `BotDetailsPage.test.tsx` (`describe('Debug 2D')`: polyline desenhada com pontos, nenhuma polyline sem caminho disponível, mock default de `/mundo/caminho-atual` somado ao `mockBotDetailsBackend`) — `vitest run`: **181/181 testes passando** (35 arquivos). `tsc -b --noEmit`/`eslint .` sem erros (mesmo warning pré-existente em `BotProxyModal.tsx`), `vite build` sucesso, `mvn -o compile` limpo. Validação manual contra backend real: servidor Java de dev encontrado já rodando na porta 8080 (processo anterior, sem o endpoint novo) precisou ser reiniciado (`mvnw spring-boot:run`, JDK 21, `JAVA_HOME` setado manualmente) pra servir o contrato atualizado antes de regenerar o cliente Orval; `curl` confirmou `caminho-atual` presente em `/v3/api-docs` real; nenhum bot persistido restaurado nesta sessão (`Restaurando 0 bot(s) persistido(s)`), sem alvo disponível pra exercitar o endpoint via Browser pane/curl com um bot real desta vez. **Validação contra servidor Minecraft real com bot em sessão PLAY navegando de fato (confirmar a polyline coincidindo com o trajeto percorrido, atualização em mudança de rota, desaparecimento ao chegar ao destino) não foi executada nesta sessão** — nenhum bot conectado a um servidor real disponível no ambiente; fica acumulada com as pendências de validação ao vivo das Etapas 1, 2 e 3 do mesmo épico | ✔ |
+
+## Persistência de Bot (EPIC-PROD-01) — o que passou a persistir e o que continua só em memória
+
+Registrado à parte da tabela acima para consulta rápida (ver Milestone 43 para o relato completo).
+
+**Persistido em PostgreSQL (`bots`/`bot_macros`, sobrevive a restart) a partir desta milestone:**
+- Identificador (`id`), nome/identidade (`username`), conta (`contaId` quando usada, senão email/username/password inline)
+- Servidor (`servidorId` quando usado, senão host/port inline) e proxy associado (host/port/tipo)
+- Política de AutoReconnect (ligado/desligado)
+- Estado desejado (`estadoDesejado`: PARADO/EXECUTANDO/PAUSADO)
+- Macros ativas por tipo (`bot_macros.tipo`, ex.: `TarefaAntiAFK`) — **sem** os argumentos exatos usados na ativação (ver limitação abaixo)
+
+**Continua existindo só em memória, perdido a cada restart (por natureza, não por lacuna a fechar):**
+- `SessaoDeJogo` (posição, vida, inventário, entidades conhecidas, chat) — só existe enquanto há conexão de rede ativa
+- Argumentos de ativação de macro (ex.: delay customizado do AntiAFK, alvo do Follow) — `TarefaContinua` não expõe accessor de configuração hoje; a restauração reativa cada macro com os argumentos-padrão do respectivo comando
+- Macro `Follow` em si — depende de um `entityId` de jogador só válido dentro da sessão em que foi criada, não é restaurável de forma alguma (nem com persistência de argumentos)
+- Buffer de log do console (`SaidaDoOperador`) por bot
+
+---
 
 ---
 
@@ -3627,3 +4236,335 @@ Antes de iniciar qualquer nova tarefa é obrigatório verificar:
 - Baseline Tecnológica
 
 Caso exista conflito, este documento deve ser atualizado antes da implementação.
+
+---
+
+## 14. Fase de Homologação (EPIC-QA-01)
+
+Iniciada em 2026-07-28. A migração funcional é considerada concluída pelo responsável do projeto; esta fase não introduz novas funcionalidades — apenas compara, na prática, o comportamento real da aplicação Java (rodando com backend Spring Boot real, PostgreSQL real e servidor Minecraft real) contra o comportamento esperado, sem consultar o código C#.
+
+Resultado: backlog técnico detalhado em [docs/21-Homologacao/01-Backlog-QA-Homologacao-Completa.md](../21-Homologacao/01-Backlog-QA-Homologacao-Completa.md), com achados classificados como BUG, GAP, Melhoria UX, Melhoria Performance e Melhoria Visual, agrupados em 9 épicos candidatos (EPIC-QA-01.1 a EPIC-QA-01.9).
+
+Achado mais crítico desta rodada: desativar uma macro pela interface reporta sucesso mas não remove de fato a macro em execução no bot (mismatch de identificador entre ativação e desativação) — ver BUG-01 no documento de backlog.
+
+### Sprint QA-01 (2026-07-28) — Correção dos BUGs críticos do backlog (BUG-01, BUG-02, BUG-04)
+
+Escopo fechado: só os 3 BUGs críticos/altos do backlog de homologação. Nenhum GAP/MUX/MPF/MV foi tocado, nenhuma DEC nova aberta, nenhuma decisão arquitetural alterada.
+
+- **BUG-01 (desativar macro não remove de fato)** — causa raiz confirmada no backend: `GET /macros` só devolve o nome de classe da `TarefaContinua` (ex. `TarefaMineracao`), e o frontend reenviava esse mesmo valor no `DELETE /macros/{alias}`; `GerenciadorDeComandos.localizar()` só resolve por chave de catálogo (ex. `miner`), então o DELETE nunca encontrava a tarefa mas respondia 200 do mesmo jeito. Corrigido só no backend (sem mudança no frontend): `MacroController.desativar()` agora resolve o alias de catálogo correto a partir do nome de classe da tarefa ativa antes de delegar a `MacroAtivacaoSupport.ativar()`, preservando o toggle (e efeitos colaterais, ex. `ComandoTwerk` parando de agachar) de cada `Comando`. Para isso, `Comando` ganhou um método default `tarefaContinua()` (retorna a classe de `TarefaContinua` que o comando liga/desliga), implementado nos 8 comandos de macro (`Follow`, `AntiAFK`, `Herbalismo`, `Minerar`, `Mob`, `AutoFish`, `LargarTudo`, `Twerk`). Validado end-to-end via UI real (Solk conectado a `olimpo.clmc.com.br:3737`): ativar Miner, clicar "Desativar", confirmar via `GET /macros` que a lista fica vazia.
+- **BUG-02 (botão "Excluir" bot não executa nada)** — não reproduzido no código-fonte atual: `BotTable.tsx`/`BotsPage.tsx`/`ConfirmDialog.tsx` já têm o handler, o diálogo de confirmação e a chamada `DELETE /bots/{id}` corretamente ligados. Validado ao vivo na UI (criação de um bot descartável, clique em "Excluir", confirmação, bot removido da lista). Hipótese mais provável: o bug observado na homologação original refletia um build de frontend desatualizado (mesma classe de problema do GAP-06/GAP-08 de build não reproduzível), não um defeito de código-fonte. Nenhuma alteração de código foi necessária.
+- **BUG-04 (troca de proxy não aplicada à conexão ativa; auto-reconnect rotaciona proxy sozinho)** — duas causas raízes distintas, ambas só no backend:
+  1. `CasoDeUsoTrocarProxy.trocar()` só persistia a nova configuração, sem sinalizar a conexão ativa. Corrigido: se o bot já tem `SessaoDeJogo` em curso, `trocar()` agora força reconexão imediata via `CasoDeUsoReconectarBot` (mesmo caminho de `POST /reconnect`), sem conectar bots que estavam desconectados.
+  2. `GerenciadorDeReconexao` chamava `rotacionarProxy()` incondicionalmente em qualquer falha de reconexão, não só no motivo de kick documentado (`MOTIVO_MUITAS_CONTAS`, fiel ao legado `MinecraftClient.cs:732-743`). Corrigido removendo essa chamada extra do bloco `catch`; a rotação legítima (por "muitas contas") continua intacta.
+  - Validado ao vivo contra o bot real Solk: troca de proxy em bot conectado força reconexão de fato (posição do personagem mudou, confirmando reconexão real); troca para proxy SOCKS5 inválida cadastrada retornou erro real de conexão (409) em vez de sucesso silencioso; com auto-reconnect ligado e proxy inválida, 4 checagens consecutivas via `GET /bots/{id}` (~7s, cobrindo várias tentativas) confirmaram que a proxy **não** alterna mais sozinha entre as cadastradas. Estado do bot restaurado ao final (proxy removida, reconectado normalmente).
+
+Build: recompilado e testes automatizados executados via Maven 3.9.9 embutido no plugin Maven do IntelliJ (`.../plugins/maven/lib/maven3`, já que o repositório continua sem Maven Wrapper — GAP-06 permanece em aberto). Dois testes que validavam o comportamento antigo e incorreto de rotação de proxy foram substituídos por testes que validam o comportamento corrigido; um teste novo cobre a reconexão forçada por troca de proxy. Suíte completa (1110+ testes) passou.
+
+Itens correspondentes marcados como resolvidos em [docs/21-Homologacao/01-Backlog-QA-Homologacao-Completa.md](../21-Homologacao/01-Backlog-QA-Homologacao-Completa.md). BUG-03 e os demais GAP/MUX/MPF/MV do backlog seguem em aberto, fora do escopo desta sprint.
+
+### Sprint QA-02 (2026-07-28) — Demais ajustes mapeados no backlog de homologação
+
+Escopo: todos os itens restantes do backlog exceto GAP-03 (Configurações somente leitura) e MPF-01 (polling não consolidado), que o próprio backlog já classificava como dependentes de decisão de produto/arquitetura — adiados por decisão explícita do responsável, não implementados nesta sprint. Nenhuma DEC nova, nenhuma mudança de arquitetura.
+
+- **GAP-06 (build não reprodutível)** — Maven Wrapper adicionado (`mvn wrapper:wrapper -Dmaven=3.9.9`, usando o Maven 3.9.9 embutido no plugin Maven do IntelliJ, já que a máquina não tinha Maven instalado nem acesso planejado a um). `.gitignore` criado (não existia) excluindo `target/`; os ~1500 arquivos de `target/` já versionados foram destrackeados via `git rm -r --cached target` (arquivos continuam em disco).
+- **BUG-03 (`GET /commands` retorna 500 genérico)** — `GlobalExceptionHandler` não tinha handler para `HttpRequestMethodNotSupportedException`, caía no catch-all genérico (500). Adicionado handler dedicado retornando 405. Validado: `GET /commands` responde 405 com mensagem específica.
+- **MV-01 (Twerk sem descrição)** — `ComandoTwerk.descricao()` preenchida.
+- **GAP-04 (métricas JVM/proxy-bot/heap)** — Backend: `MetricasResponse.threadCount` (`ManagementFactory.getThreadMXBean()`), `MemoriaResponse.naoHeapUsadaMb` (`ManagementFactory.getMemoryMXBean()`), `ProxyResponse.botsEmUso` (join em `ProxyController.listar()` contra `GerenciadorDeBots`). Frontend: Dashboard ganhou cards "Memória (Non-Heap)" e "Threads da JVM" (removido `DashboardGapNotice`, agora obsoleto — as 3 lacunas que ele documentava foram fechadas); `ProxyTable` ganhou coluna "Em uso por". Tipos do frontend regenerados via `orval` contra o backend real rodando.
+- **MUX-02 (Tipo não reseta no modal Nova Proxy)** — causa raiz: `key` do `ProxyFormModal` no modo create era sempre a mesma string literal, então React nunca remontava o componente (o `useState` interno reaproveitava o valor anterior). `ProxyPage` agora incrementa um contador a cada clique em "Nova proxy" e inclui no `key`.
+- **MUX-03 (título genérico "Conflito de estado" pra qualquer 409)** — Backend (`FabricaDeConexaoMinecraftV1_8`) passou a anexar a causa raiz da falha de conexão na mensagem (timeout / host desconhecido / conexão recusada / sem rota até o host). Frontend (`errorMessages.ts`) usa esse prefixo estável pra escolher título específico, sem precisar de status/campo novo no contrato REST.
+- **GAP-02 (slots de inventário sem aria-label)** — `ItemSlot` agora usa o texto do tooltip (já calculado) também como `aria-label`; todos os pontos de uso (inventário, hotbar, janela, cursor, equipamento) passam `label` explícito.
+- **GAP-05 (semântica Iniciar vs Conectar)** — Tooltip explicativo nos botões "Iniciar"/"Conectar" da lista de bots. Nenhuma mudança de comportamento, só documentação inline.
+- **MUX-01 (diálogo trocar proxy sem reaproveitar cadastradas/sem remover)** — `BotProxyModal` ganhou combobox "Proxy cadastrada" (com "Digitar manualmente" como fallback) e botão dedicado "Remover proxy" (host vazio, já tratado pelo backend desde a Sprint QA-01/`ProxySupport.resolver`).
+- **GAP-01 (sem UI para abrir baú/clicar bloco)** — Formulário "Clicar bloco (abrir baú / interagir)" na aba Ações, reaproveitando o comando `ClicarBloco` já catalogado via o endpoint genérico `POST /commands` (sem endpoint REST novo). Ao concluir, invalida a query de `GET /inventario/janela` pra a seção "Janela" do Inventário atualizar sozinha.
+
+Validação ao vivo contra o bot real Solk (`olimpo.clmc.com.br:3737`) e as 2 proxies já cadastradas: Dashboard mostrando threads/non-heap reais; tabela de Proxy com coluna "Em uso por"; modal de troca de proxy do bot com combobox e botão remover; Catálogo mostrando descrição do Twerk; aba Ações com o card "Clicar bloco" (testado com coordenada fora de alcance — retornou `{"resultado":"ERRO"}` via rede, sem efeito colateral no mundo real); aba Inventário com aria-label em todos os slots (ex. `"Slot 36: #3 ×24"`); tooltip de "Iniciar" confirmado via DOM. `GET /commands` retornando 405.
+
+Build: `mvn -o package` via Maven Wrapper recém-adicionado; suíte completa do backend (1110+ testes) e do frontend (120 testes, 26 arquivos) passando; `tsc -b` sem erros.
+
+### EPIC-PROD-04 (2026-07-28) — Auditoria de produtividade operacional e melhorias ALTA
+
+Escopo: exclusivamente experiência de uso/produtividade operacional (Dashboard, Painel
+Operacional, Lista de Bots, Sidebar, fluxo de criação de Bot, navegação, monitoramento,
+escalabilidade visual para dezenas/centenas de bots) — não busca de bugs nem de problemas
+arquiteturais (isso já foi feito no EPIC-QA-01/Sprints QA-01/QA-02 acima). Código C# não
+consultado; só estado atual do projeto, documentação existente, backlog de homologação e
+`docs-reescrita/docs/12-Interface/`. Nenhuma DEC aberta.
+
+Auditoria completa com achados classificados ALTA/MÉDIA/BAIXA em
+[docs/21-Homologacao/01-Backlog-QA-Homologacao-Completa.md](../21-Homologacao/01-Backlog-QA-Homologacao-Completa.md#6-epic-prod-04--auditoria-de-produtividade-operacional-2026-07-28)
+(IDs `OPX-01` a `OPX-09`). Implementados só os ALTA sem mudança arquitetural, sem DEC nova,
+reaproveitando componentes existentes do Design System:
+
+- **OPX-01 (Dashboard sem atalho pra lista de Bots)** — `MetricCard`s de estado (conectados/
+  executando/pausados/desconectados) e linhas do `StateBreakdownCard` (nova prop opcional
+  `onItemClick`, retrocompatível) agora navegam para `/bots?estado=<ESTADO>`.
+- **OPX-02 (lista de Bots sem filtro por estado)** — `Select` "Filtrar por estado" ao lado do
+  `SearchBox` em `BotsPage`, usando nova `filterBotsByEstado` (`features/bots/services/filterBots.ts`),
+  combinável com a busca textual já existente.
+- **OPX-03 ("selecionar todos" só cobre a página atual de 10)** — botão "Selecionar todos os N bots
+  filtrados" (e "Limpar seleção") quando a página inteira já está selecionada e o recorte filtrado
+  é maior que a página, usando o novo `filteredIds` de `useBotTableState`.
+- **OPX-04 (busca/filtro/página perdidos ao navegar pra um bot e voltar)** — `useBotTableState`
+  reescrito pra persistir `q`/`estado`/`page` na URL via `useSearchParams` (em vez de `useState`
+  local), o que também viabiliza o deep-link do Dashboard (OPX-01). `SearchBox` ganhou prop
+  opcional `defaultValue` pra refletir o termo restaurado da URL. Único hook específico de Bots
+  alterado — `useTableState` genérico (usado por Proxy/Contas/Servidores/Catálogo) não foi tocado.
+
+OPX-05 (ações em lote sem limite de concorrência/progresso incremental) é ALTA mas não foi
+implementado nesta sessão por exigir um componente do Design System ainda não construído
+(`ProgressBar`), fora do critério "reaproveitar exclusivamente componentes existentes" definido
+pra esta sessão — fica registrado pra sprint dedicada. OPX-06 a OPX-09 (MÉDIA/BAIXA) não
+implementados, conforme escopo.
+
+2 testes de `BotsPage.test.tsx` ajustados: o novo `Select` de filtro por estado introduz opções
+com o mesmo texto (`Executando`/`Conectado`) que já apareciam como badge de estado na tabela,
+causando `Found multiple elements`; os testes passaram a escopar a busca dentro da tabela
+(`within(screen.getByRole('table'))`). `DashboardPage.test.tsx` passou a renderizar dentro de
+`MemoryRouter` (novo uso de `useNavigate` no Dashboard).
+
+Validação: `tsc -b` sem erros, `eslint .` sem erros (1 warning pré-existente não relacionado),
+suíte completa do frontend (120 testes, 26 arquivos) passando. Validado ao vivo contra backend
+real (Spring Boot + PostgreSQL, JDK 21 `ms-21.0.9`) e o bot real `Solk` conectado a
+`olimpo.clmc.com.br:3737` (já reconectado automaticamente ao subir o backend, via
+auto-reconnect): clique em "Bots conectados" no Dashboard navegou para `/bots?estado=CONNECTED`
+com o `Select` já mostrando "Conectado" selecionado; navegação pro Painel Operacional do bot Solk
+(console/vida/inventário/mundo reais) e volta via navegador preservou o filtro na URL sem
+recarregar do zero; nenhum erro no console do navegador.
+
+### EPIC-VIEWER-3D (2026-07-29) — Fundação do Viewer 3D (backend completo + Etapas 4-6 do frontend)
+
+Sucessor do EPIC-VIEWER-04 (pausado, permanece como está - Debug 2D não foi tocado). Escopo desta
+sessão: arquitetura definitiva do Viewer 3D (ver
+[docs/21-EPIC-VIEWER-3D.md](../21-EPIC-VIEWER-3D.md) para a auditoria/plano completo produzidos
+numa sessão anterior), implementada de ponta a ponta - backend (dirty-tracking, snapshot, canal WS
+dedicado) e frontend (three.js/react-three-fiber: mesher com culling de face, entidades, HUD).
+Nenhuma DEC nova aberta - a única decisão arquitetural desta sessão (canal WS dedicado em vez de
+reaproveitar `/ws/bots/{id}/events`) já estava prevista e recomendada no próprio doc 21, seção 7.
+
+**Backend:**
+- `Mundo` ganhou dirty-tracking + versão monotônica: `chunksCarregadosPendentes`/
+  `chunksDescarregadosPendentes`/`blocosAlteradosPendentes` (populados em `registrarChunk`/
+  `descarregarColuna`/`definirBloco`, sem tocar nenhum Receptor de protocolo), drenados por
+  `drenarChunksCarregados()`/`drenarChunksDescarregados()`/`drenarBlocosAlterados()`.
+- `EntidadesDoMundo.remover` agora enfileira o id numa fila drenável (`drenarRemovidas()`) -
+  entidades "atualizadas" continuam sendo reenviadas por inteiro a cada ciclo (payload pequeno,
+  simplificação deliberada documentada em `ViewerDeltaResponse`).
+- `Chunk`/`SecaoDeChunk` ganharam acessores de leitura bruta (`secaoPresente`/`idsDaSecao`/
+  `metadataDaSecao`) para `ChunkSnapshotDto` serializar sem alocar um `Bloco` por índice.
+- DTOs novos (`interfaces.rest.dto`): `ChunkPosicaoResponse`, `ChunkSnapshotDto` (binário compacto
+  em Base64, ver comentário da classe), `BlocoAlteradoDto`, `EfeitoAtivoDto`, `EntidadeViewerDto`
+  (superset de `EntidadeResponse` - velocidade/headYaw/equipamento/efeitos, tudo já existente no
+  domínio, só sem DTO até agora), `ViewerSnapshotResponse`, `ViewerDeltaResponse`.
+- `MundoController` ganhou `GET /api/v1/bots/{id}/viewer/snapshot?raioChunks=`.
+- `NotificadorDeEventos` ganhou `temAssinantes(botId)` (opt-in gate); uma segunda instância
+  (`notificadorDeEventosViewer`, bean `@Qualifier`, original marcado `@Primary`) isola o tráfego do
+  Viewer do canal de log/estado existente.
+- `ViewerWebSocketHandler` novo (`/ws/bots/{id}/viewer`) - snapshot completo automático ao
+  conectar, depois deltas via `ViewerBroadcaster` (novo, `application.viewer`), agendado a cada
+  150ms por `CicloDeVidaDoMotorDeExecucao` (terceira tarefa agendada, ao lado do tick de 50ms e da
+  verificação de reconexão de 1s) - só serializa/transmite mundo para bots com assinante ativo no
+  canal do Viewer, custo zero para os demais.
+- Escopo deliberadamente fora desta sessão (documentado como limitação, não como pendência
+  esquecida): metadata genérica de entidade (sneak/on-fire/nome customizado - só o codec existe,
+  sem handler/receptor), biome/luz (descartados no parse), partículas, block entities além de
+  placas, skin de jogador. Nenhum requer mudança de protocolo para o Viewer funcionar.
+
+**Frontend** (`advancedbot-frontend`, dependências novas: `three`, `@react-three/fiber`,
+`@react-three/drei`):
+- Nova aba "Viewer 3D" (`Viewer3DPage`, rota `/bots/:id/viewer-3d`), mesmo padrão de tab do
+  Debug 2D.
+- `useViewerConnection` - abre o canal WS dedicado (`wsClient.connectViewerSocket`, novo), nunca
+  faz polling REST. Dado pesado (chunks) vai direto para `ViewerWorldStore` (fora do estado React,
+  lido pelo three.js via `useFrame`); só os campos pequenos (posição, inventário, entidades,
+  caminho) entram em `useState`, para o React só re-renderizar o HUD.
+- `chunkDecode.ts`/`ViewerWorldStore.ts`/`chunkMesher.ts` - decodificação do binário compacto,
+  modelo de mundo do lado do cliente com o mesmo dirty-tracking do backend, e mesher com culling de
+  face por vizinho (mesma família de algoritmo do `ChunkRenderer` do antigo ViewForm C#). Cor por
+  bloco é determinística por id (sem atlas de textura/blockstate real ainda - Etapa 7 do roadmap,
+  não bloqueia o valor operacional atual).
+- `EntitiesLayer`/`PathOverlay`/`LookTargetOverlay` - entidades (caixa+nametag via
+  `@react-three/drei` `Html`), caminho atual (linha, reaproveitando `CaminhoAtualResponse` já
+  embutido em todo snapshot/delta) e bloco/entidade observados (raycast local contra o próprio
+  `ViewerWorldStore`, sem chamar `/mundo/raycast` do backend - aproximação deliberada para o HUD,
+  documentada em `lookRaycast.ts`).
+- Câmera livre (`OrbitControls`, sempre centrada no bot) - o Viewer nunca envia nenhum comando ao
+  bot, é puramente observador, conforme requisito do épico.
+
+**Testes:** backend 1215 (0 falhas, 3 skips pré-existentes); frontend 207 (0 falhas), `tsc -b` e
+`eslint .` limpos.
+
+**Validação ao vivo:** backend real (Spring Boot + PostgreSQL) reiniciado com autorização explícita
+do operador (processo já rodava com o bot real `Solk` conectado a `apolo.clmc.com.br:3636`;
+auto-reconnect recuperou a sessão em segundos). `GET .../viewer/snapshot` e o WS
+`/ws/bots/{id}/viewer` testados diretamente contra esse bot real (chunks/entidades/inventário reais
+retornados, delta a cada ~150ms confirmado via client WS ad-hoc). Frontend verificado no navegador
+contra esse mesmo backend: aba Viewer 3D renderizou o terreno real (água, árvores, relevo) do
+servidor `apolo.clmc.com.br`, HUD mostrando posição/vida/dimensão reais do bot, nametag do Creeper
+próximo renderizada, órbita de câmera funcional, sem erros no console.
+
+Próximos passos (Etapas 7-9 do roadmap, upgrades de fidelidade visual, não bloqueiam o valor
+operacional já entregue): parser real de blockstate/model JSON (geometria real de escada/cerca/
+placa), biome/luz retidos no codec de chunk + água/lava com nível real, modelo de player/mob real
+(hoje é caixa+nametag). Handler/receptor completo de Entity Metadata (sneak/fire/nome customizado)
+também fica como candidato de sessão futura, fora do escopo original do épico mas identificado
+durante a auditoria.
+
+### EPIC-VIEWER-3D (2026-07-29) — Subsistema de Entidades e Câmera
+
+Continuação direta da entrada anterior (mesmo dia): fecha os dois gaps que ficaram documentados
+como "próximos passos" (Entity Metadata) e implementa o subsistema de câmera/overlays completo.
+Auditoria prévia (domínio Java + legado C# `Projeto Adv 2.4.5`) confirmou que SpawnObject/XP Orb,
+metadata de flags e todo o sistema de câmera multi-modo/animações/model rendering nunca existiram
+no legado (`Handler_v152.cs`/`Handler_v18.cs` descartam esses pacotes ou nem têm `case` para eles;
+`ViewForm.cs` só tinha toggle binário 1ª-pessoa/freecam, sem 3ª pessoa, sem mão do bot, sem
+model renderer - só hitbox+nametag de texto) - trabalho é aditivo/novo, não há regra de negócio
+herdada divergida. Nenhuma DEC nova aberta (mesmo raciocínio já registrado na entrada anterior:
+todo pacote novo segue o padrão Packet→Codec→Handler→Evento→Receptor já estabelecido).
+
+**Backend:**
+- `EntidadeRemota` ganhou flags de metadata comuns a qualquer entidade (`FLAG_ON_FIRE`/
+  `FLAG_AGACHADO`/`FLAG_CORRENDO`/`FLAG_INVISIVEL`, byte 0 do protocolo) e nome customizado
+  (`definirNomeCustomizado`/`nomeCustomizado`/`nomeCustomizadoVisivel`); sealed permits estendido
+  com duas subclasses novas: `EntidadeObjeto` (item dropado/minecart/projétil genérico via Spawn
+  Object, com `itemStack` opcional só para tipo 2 = item dropado, populado via Entity Metadata
+  índice 10) e `EntidadeXpOrb` (Spawn Experience Orb, campo `quantidade`).
+- `MetadataDeEntidadeCodec` ganhou `decodificar()` (expõe valores por índice) ao lado do `pular()`
+  já existente (mantido para SpawnMob/SpawnPlayer/SpawnObject, que só precisam do alinhamento de
+  frame) - primeiro consumidor real do conteúdo de Entity Metadata desde a introdução do codec.
+- 3 pacotes novos (5 arquivos cada, mesmo padrão Packet/Codec/Handler/Evento/Receptor):
+  `SpawnObject` (0x0E), `SpawnExperienceOrb` (0x11), `EntityMetadata` (0x1C) - todos registrados em
+  `RegistroDePacotesV1_8`/`AdaptadorConexaoBotV1_8`. Nenhum tinha precedente no legado (confirmado
+  por auditoria - `Handler_v152.cs` descarta Spawn Object sem criar entidade, `Handler_v18/19.cs`
+  nem tem `case` para ele); formato de fio validado direto contra a especificação do protocolo 47.
+- `EntidadeViewerDto` estendido: `categoria` (JOGADOR/MOB/OBJETO/XP_ORB, `jogador` mantido por
+  compatibilidade), `agachado`/`correndo`/`invisivel`/`comFogo`/`nomeCustomizado(Visivel)`,
+  `tipoObjeto`/`itemStack` (só `EntidadeObjeto`), `quantidadeXp` (só `EntidadeXpOrb`).
+  `EntidadeResponse.tipoDe` também ganhou os dois `case` novos (switch exaustivo sobre o sealed).
+
+**Frontend** (`advancedbot-frontend`):
+- Câmera extraída para módulo próprio `viewer3d/camera/` (`cameraMath.ts` - lógica pura testável,
+  `CameraController.tsx`, `CameraModeSwitch.tsx`), substituindo a função `CameraFollow` antes
+  embutida em `ViewerScene.tsx`. Três modos trocáveis em tempo real: `orbit` (comportamento
+  original inalterado), `firstPerson` (câmera no olho do bot, rotação = yaw/pitch reais, near
+  reduzido, oculta o próprio `SelfMarker`) e `thirdPerson` (atrás do bot a distância fixa,
+  equivalente ao F5 vanilla). FOV mantido em 70° (default vanilla) nos três modos - sem
+  dependência de sprint do próprio bot (fora de escopo, decisão já registrada na sessão anterior).
+- `HeldItemView.tsx`/`assets/heldItemTexture.ts` - "mão do bot" em primeira pessoa: quad fixo no
+  canto da câmera com a textura do item equipado, reaproveitando os sprite sheets 2D já existentes
+  do HUD de inventário (recorte via `<canvas>`, mesma técnica de `ConstrutorDeAtlas`) em vez de
+  novo asset.
+- `EntitiesLayer.tsx` reescrito: categorias novas (item dropado = billboard do ícone do item, XP
+  orb = billboard verde com tooltip da quantidade); visual de sneak (achata a caixa)/sprint
+  (inclina)/fogo (overlay laranja translúcido)/invisibilidade (opacidade baixa, nunca some -
+  ferramenta de debug); nome customizado no lugar do tipo quando visível; equipamento (armadura em
+  4 caixas fincas sobrepostas + item na mão via mesmo helper de textura); animações de
+  andar/atacar/morrer disparadas por transição de `velocityX/Z`/`ultimaAnimacao`/`ultimoStatus`
+  (sem mudança de domínio, só consumo do que já era transmitido); interpolação de posição/rotação
+  entre deltas (`useInterpolatedEntities.ts`, lerp de ângulo pelo caminho mais curto, função pura
+  testável); hitbox de debug por entidade (toggle-controlada).
+- `SelectedEntityOverlay.tsx` (realce da entidade observada, reaproveitando
+  `calcularEntidadeObservada` já existente) e traço do raio de mira adicionado a
+  `LookTargetOverlay.tsx` (antes só mostrava o bloco final).
+- `DebugOverlaySettings.ts`/`DebugOverlayToggles.tsx` - 6 toggles individuais (raycast, bloco
+  selecionado, entidade selecionada, pathfinding, hitboxes, gizmo de orientação via
+  `GizmoHelper`/`GizmoViewport` do `@react-three/drei`, sem lib nova), estado em `Viewer3DPage`.
+
+**Testes:** backend +9 arquivos de teste novos (`EntidadeObjetoTest`, `EntidadeXpOrbTest`, casos
+novos em `EntidadeRemotaTest`/`EntidadeViewerDtoTest`, Codec+Handler+Receptor para os 3 pacotes
+novos) - suíte completa (`mvn test`) verde. Frontend +3 arquivos de teste (`cameraMath.test.ts`,
+`useInterpolatedEntities.test.ts`, casos novos cobrindo lerp de ângulo/posição/câmera 3ª pessoa) -
+222 testes (`vitest run`) verdes, `tsc -b`/`eslint .` limpos. `heldItemTexture.ts` deliberadamente
+sem teste dedicado (carregamento de imagem/canvas, mesma categoria não-testável de
+`textureAtlas.ts`, que também não tem teste no projeto).
+
+**Validação ao vivo:** backend Java reiniciado com autorização explícita do operador (havia uma
+instância antiga já rodando na porta 8080, iniciada antes da sessão, servindo o schema OpenAPI
+desatualizado) para regenerar os tipos Orval (`EntidadeViewerDto.ts` confirmado com todos os campos
+novos). Frontend aberto no navegador contra esse backend e o bot real `Solk`: Viewer 3D carregou
+sem erro de console, HUD/toolbars novos renderizaram (troca de câmera órbita → 1ª pessoa → 3ª
+pessoa confirmada visualmente, gizmo de orientação reagindo à rotação, `SelfMarker` correto em 3ª
+pessoa, toggle de overlay sem quebrar a cena). Bot estava desconectado do servidor Minecraft
+durante o teste (0 entidades no mundo) - **não foi possível validar visualmente** mob/player real
+com sneak/fogo/nome customizado/item dropado/XP orb nem os pacotes novos (SpawnObject/
+SpawnExperienceOrb/EntityMetadata) contra tráfego de servidor real; cobertura desses caminhos fica
+nos testes unitários/round-trip de codec, não em observação ao vivo.
+
+Próximos passos: validar os 3 pacotes novos e a metadata de flags contra um servidor Minecraft real
+com mobs/itens/XP orbs visíveis (a lacuna de validação ao vivo desta sessão); Etapas 7-9 do roadmap
+seguem como upgrade de fidelidade futuro (blockstate real, biome/luz, modelo de player/mob real -
+este último agora parcialmente mitigado pela caixa com armadura/item-na-mão/animações, mas ainda
+não é um modelo 3D real de skin).
+
+### EPIC-VIEWER-3D (2026-07-29) — Etapa 9: modelo real de player/mob (fecha o roadmap do épico)
+
+Continuação direta da entrada anterior (mesmo dia). Usuário perguntou sobre skin real de player,
+modelo do creeper e iluminação dos blocos - reauditoria descobriu que **Etapas 7 (parser real de
+blockstate/model) e 8 (biome/luz real + água/lava com nível real) já estavam implementadas e
+ligadas ao pipeline real** numa sessão anterior não refletida no meu contexto (`chunkMesher.ts` já
+usa `modelResolver.ts`/`textureAtlas.ts`/`legacyBlocks.ts`/`biomeColors.ts`; backend já retém
+block/sky light e bioma em `SecoesDeChunkCodec`/`Chunk`/`ChunkSnapshotDto` em vez de descartar).
+Único item real do roadmap ainda pendente era a Etapa 9 - fechada nesta sessão. Sessão 100%
+frontend, sem mudança de protocolo/domínio/DTO no backend.
+
+**Fonte de textura:** skins de mob (`creeper.png`, `zombie.png` etc, formato padrão Minecraft
+64x32/64x64) e skin padrão de player (`char.png`, estilo Steve) copiadas de
+`anthack raiz\AntiHack_FULL\mob\` para `advancedbot-frontend/public/mob-skins/` (41 arquivos),
+com autorização explícita do operador - mesmo critério já aceito para o `mc-assets` de blocos
+(textura padrão Mojang extraída de client 1.8, uso local, sem redistribuição).
+
+**Escopo consciente (decisão registrada no plano):** skin de PLAYER é sempre a padrão (`char.png`)
+- buscar a skin real da conta via API da Mojang exigiria pipeline de rede/UUID novo, fora do que a
+auditoria original do épico cobriu. Geometria biped (cabeça/tronco/braço/perna) é reaproveitada
+para TODAS as entidades (players e mobs) - réplica exata do esqueleto de cada mob (aracnídeo pra
+aranha, quadrúpede pra vaca) não é viável no orçamento desta sessão; o ganho real é sair de "caixa
+sólida colorida" para "corpo articulado com a textura real do mob/player".
+
+**Novo** (`advancedbot-frontend/src/features/bots/details/viewer3d/entityModel/`):
+- `minecraftBoxUV.ts` - `retangulosUVDaCaixa` (função pura, testada) implementa o unwrap padrão de
+  caixa Minecraft (cabeça em 0,0; tronco em 16,16; braço/perna em 40,16/0,16 - válido nos formatos
+  64x32 e 64x64, já que a altura extra do 64x64 é só a camada de overlay, não usada aqui);
+  `aplicarUVDeCaixaMinecraft` escreve isso no atributo `uv` de um `THREE.BoxGeometry` (ordem de
+  grupo/vértice confirmada na fonte do three.js), com espelhamento horizontal pra reaproveitar a
+  mesma região de textura no lado oposto do corpo (mesmo truque do formato clássico 64x32).
+- `skinTextures.ts` - cache de textura completa por URL (mesmo padrão de `heldItemTexture.ts`, sem
+  recorte); `SKIN_PADRAO_URL`; `MOB_SKIN_POR_NOME` (nome de exibição já resolvido pelo backend em
+  `entidade.tipo` -> arquivo de skin; tipos sem arquivo disponível - Giant, Blaze, Magma Cube,
+  Ender Dragon, Witch, Endermite, Guardian, Shulker, Horse, Rabbit - caem no fallback de cor sólida
+  já existente, sem regressão).
+- `EntityBipedModel.tsx` - biped de 6 caixas (cabeça/tronco/braço×2/perna×2) com pivôs de
+  ombro/quadril expostos via `useImperativeHandle` para animação externa; textura real via
+  `minecraftBoxUV` quando `textureUrl` resolve, fallback pra cor sólida quando não.
+
+**Alterado:** `EntitiesLayer.tsx` - `EntityMarker`/`SelfMarker` trocam o `<boxGeometry>` único pelo
+`<EntityBipedModel>`; animação de andar agora gira os pivôs de perna/braço em fase oposta (marcha
+real) em vez de bob vertical do mesh inteiro; animação de ataque gira o braço direito pra frente em
+vez de pulso de escala; convenção de coordenada do grupo raiz mudou de "centro da caixa" pra "pés"
+(y=0), mesmo referencial usado pelo biped - `EquipamentoVisual` recalibrado pra essa nova pilha.
+Sneak/fogo/invisibilidade/morte/hitbox continuam funcionando (atuam no grupo externo, agnósticos à
+geometria interna).
+
+**Testes:** `minecraftBoxUV.test.ts` (novo, `retangulosUVDaCaixa` contra valores conhecidos de
+cabeça/tronco/braço) - 225 testes (`vitest run`) verdes, `tsc -b`/`eslint .` limpos. Sem teste
+dedicado para `skinTextures.ts`/`EntityBipedModel.tsx` (carregamento de imagem/DOM, mesma categoria
+não-testável de `heldItemTexture.ts`/`textureAtlas.ts`, convenção já estabelecida no projeto).
+
+**Validação ao vivo:** backend real (porta 8080) e frontend reabertos contra o bot real `Solk`,
+conectado e executando a macro na mobtrap (creeper por perto, mesma sessão de validação da entrada
+anterior). Rede confirmou `GET /mob-skins/char.png` e `GET /mob-skins/creeper.png` retornando 200
+assim que as entidades (bot + creeper) chegaram via WS - textura certa resolvida por categoria
+(jogador vs. nome do mob). Câmera 3ª pessoa mostrou o `SelfMarker` com forma articulada e faixas de
+cor distintas por segmento (não mais um bloco sólido), nametag e cone de direção funcionando, sem
+erro de console. Cena permaneceu escura (mobtrap real sem luz - mesma condição já registrada na
+validação anterior, não é regressão) - não foi possível fazer comparação pixel-a-pixel da skin
+contra o cliente vanilla nesta sessão, mas o pipeline (textura certa por categoria, sem crash, UV
+sem distorção visível nas partes que apareceram na captura) está confirmado ponta a ponta.
+
+**Roadmap do EPIC-VIEWER-3D encerrado** (Etapas 1-9, ver `docs/21-EPIC-VIEWER-3D.md` seção 6).
+Próximos passos, se houver interesse futuro: (a) validar os 3 pacotes novos da sessão anterior
+(SpawnObject/SpawnExperienceOrb/EntityMetadata) contra tráfego real com item dropado/XP orb visível
+- ainda não observado ao vivo; (b) skin real de player via API da Mojang (fora do escopo original);
+(c) modelos específicos por família de mob (aracnídeo/quadrúpede) em vez do biped genérico
+reaproveitado; (d) motor de propagação de luz para blocos alterados via delta (hoje aproximado,
+documentado como limitação em `SecaoDeChunk`/`ViewerWorldStore`).
+
+Itens marcados como resolvidos em [docs/21-Homologacao/01-Backlog-QA-Homologacao-Completa.md](../21-Homologacao/01-Backlog-QA-Homologacao-Completa.md). GAP-03 e MPF-01 seguem em aberto, adiados por decisão de produto/arquitetura pendente.

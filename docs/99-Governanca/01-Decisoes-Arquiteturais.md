@@ -2038,3 +2038,161 @@ aprovado e pediu preparação definitiva do backend para produção — persist�
 de integração REST, validação de CORS/WebSocket — sem consulta ao legado C# e sem endpoints novos
 além dos indispensáveis à persistência; forneceu a credencial de superusuário do PostgreSQL local
 mediante pedido explícito para viabilizar a criação do role/banco dedicados ao app.)
+
+---
+
+### DEC-43 — EPIC-PROD-01: Persistência Completa de Bot (Milestone 43)
+
+**Contexto:** Com Conta/Servidor/Proxy já persistidos (DEC-42), o único objeto de domínio que
+sobrevivia apenas em memória era `Bot` — a cada restart da API, todos os bots cadastrados, seu
+estado (executando/parado), política de AutoReconnect e macros ativas se perdiam, exigindo
+recadastro manual completo. O responsável declarou nova fase do projeto ("de portar
+funcionalidades para produto utilizável no dia a dia") e pediu persistência completa de Bot,
+reutilizando os Casos de Uso já existentes para reconstrução, sem alterar arquitetura, Ports ou
+contratos REST. Fontes de verdade restritas a `docs/99-Governanca`, `docs/12-Interface`,
+implementação Java e API REST/Frontend existentes — legado C# explicitamente não consultado.
+
+**Legado consultado:** Nenhum (instrução explícita do responsável para esta sessão) — mesma
+disciplina já seguida pela DEC-40/DEC-41/DEC-42 para peças de infraestrutura sem equivalente no C#.
+
+**Decisões Tomadas:**
+
+1. **Porta nova `RepositorioDeBots`** (`application.port`), com 4 operações em vez de um único
+   `salvar(Bot)` — `criar(BotPersistido)`, `atualizarConfiguracao(Bot)`,
+   `sincronizarMacros(UUID,List<String>)`, `remover(UUID)`, mais `listar()` para o boot. Diferença
+   deliberada do padrão CRUD simples de `RepositorioDeContas`/`RepositorioDeServidores`/
+   `RepositorioDeProxies` (DEC-42): `Bot` é um agregado mutável com mais de 10 Casos de Uso
+   alterando estado em produção (iniciar/parar/pausar/retomar/conectar/desconectar/trocar
+   proxy/definir auto-reconnect/macros), cada um já sabendo exatamente qual sub-conjunto de campos
+   mudou — expor uma operação por tipo de mutação evita releitura completa do agregado a cada
+   escrita e mantém cada Caso de Uso responsável só pelo que ele de fato altera.
+2. **`BotPersistido`** (`application.port`, record puro) como forma de trânsito entre o adapter e
+   os Casos de Uso — não é o agregado `Bot` (que carrega estado de runtime não serializável:
+   `SessaoDeJogo`, `SaidaDoOperador`, listeners) nem uma entidade JPA; só o subconjunto de
+   configuração necessário para reconstrução.
+3. **Adapter `RepositorioDeBotsJpa`** (`infrastructure.persistence`) + `BotJpaEntity`/
+   `BotMacroJpaEntity` (`infrastructure.persistence.jpa`) — mesmo padrão de mapeamento manual das
+   DECs anteriores, domínio (`Bot`) permanece sem nenhuma anotação de framework.
+   `atualizarConfiguracao` faz load-then-mutate (busca a entidade gerenciada existente e só altera
+   os campos derivados de `Bot`, preservando `contaId`/`servidorId` — que não existem mais no
+   agregado depois de resolvidos na criação — e as macros, que vivem em tabela própria).
+4. **`bot_macros` como tabela filha própria** (não `@ElementCollection`) — um registro por tipo de
+   macro ativa (`TarefaContinua.getClass().getSimpleName()`), substituído por inteiro
+   (`sincronizarMacros` apaga tudo e reinsere a lista atual) em vez de incremental — evita
+   depender de `TarefaContinua` expor alias/argumentos (que não expõe hoje), a mesma limitação já
+   registrada na Milestone Frontend 06 sobre `MacroResponse.tipo`.
+5. **`CasoDeUsoCriarBot.criar` ganha 2 overloads aditivos** — `(EnderecoServidor,CredenciaisBot,UUID
+   contaId,UUID servidorId)` e `(IdentificadorBot,EnderecoServidor,CredenciaisBot,UUID,UUID)`. O
+   overload de 2 argumentos original é preservado intacto (nenhum call site/teste existente
+   quebrado); o overload com `IdentificadorBot` explícito é o único caminho de reconstrução no
+   boot, permitindo reaproveitar o `id` original em vez de gerar um novo — esse é o mecanismo que
+   garante "mesmo fluxo de criação normal" tanto para bots novos quanto para bots restaurados.
+6. **`RestauradorDeBots`** (`application.bootstrap`, `ApplicationRunner`) — único componente desta
+   milestone sem um Caso de Uso pré-existente por trás, porque nenhuma peça anterior orquestrava
+   "ler tudo do repositório e recriar"; a orquestração em si não contém nenhuma regra de negócio
+   nova, só chama em sequência os mesmos Casos de Uso que a API usa (`CasoDeUsoCriarBot` →
+   `CasoDeUsoDefinirAutoReconnect` → `GerenciadorDeComandos.executar` por macro →
+   `CasoDeUsoConectarBot.connect` se o estado desejado era EXECUTANDO/PAUSADO). Roda como
+   `ApplicationRunner` (depois do `SmartLifecycle.start()` de `CicloDeVidaDoMotorDeExecucao`, então
+   `MotorDeTick`/`GerenciadorDeReconexao` já estão ativos quando cada bot é registrado) — nenhum
+   scheduler novo, nenhuma lógica de retry própria: reconexão automática pós-restart é o mesmo
+   `GerenciadorDeReconexao` que já cobre quedas em produção.
+7. **Falha de conexão na restauração é tolerada, não é erro fatal do boot** — se o servidor de
+   destino estiver inalcançável (ambiente sem Minecraft real, por exemplo), o bot é registrado
+   mesmo assim (esqueleto completo: id/credenciais/endereço/autoReconnect/macros), fica `PARADO`, e
+   se `autoReconnect=true` o `GerenciadorDeReconexao` assume a partir dali — mesmo comportamento de
+   uma queda de conexão em produção, não um caminho especial de restauração.
+8. **Macro `Follow` excluída deliberadamente da restauração** — `TarefaFollow` depende de um
+   `entityId` de jogador só válido dentro da `SessaoDeJogo` em que foi criada; não sobrevive a uma
+   reconexão de jeito nenhum, com ou sem persistência. `RestauradorDeBots` ignora essa macro com
+   log de aviso em vez de tentar reativá-la.
+9. **Argumentos de ativação de macro não são persistidos** — só o tipo (7 macros restauráveis:
+   antiafk/herbalismo/miner/mob/autofish/dropall/twerk, reativadas com os argumentos-padrão de cada
+   comando). Persistir os argumentos exatos exigiria `TarefaContinua` expor um accessor de
+   configuração que não existe hoje — fora do escopo pedido (só persistência, sem mudança de
+   contrato de macro).
+
+**Justificativa:** Mesma disciplina de "casca fina"/write-through das DECs 40-42 — nenhuma regra de
+negócio nova nos Casos de Uso existentes (só ganham um colaborador `RepositorioDeBots` a mais),
+nenhuma Port pré-existente alterada, nenhum contrato REST alterado. A única peça genuinamente nova
+é a orquestração de restauração (`RestauradorDeBots`), e mesmo essa é só sequenciamento de Casos de
+Uso já aprovados.
+
+**Consequências:**
+
+*Positivas:*
+- Bots sobrevivem a um restart da API — limitação central do produto, fechada.
+- AutoReconnect volta a agir automaticamente pós-restart sem intervenção manual (mesmo mecanismo
+  de produção, sem código especial de restauração).
+- Macros ativas (exceto Follow) são reativadas automaticamente, ainda que com argumentos-padrão.
+- Bug real de produção encontrado e corrigido durante a validação manual (não pelos testes
+  automatizados iniciais): `BotMacroSpringDataRepository.deleteByBotId`, uma query derivada Spring
+  Data, lançava `TransactionRequiredException` ao encontrar pelo menos uma linha para remover —
+  diferente dos métodos herdados de `SimpleJpaRepository` (`save`/`deleteById`, já `@Transactional`
+  por padrão), uma query derivada customizada só executa `EntityManager.remove()` dentro de
+  transação se isso for pedido explicitamente. Corrigido com `@Transactional` no método;
+  `RepositorioDeBotsJpaTest` foi deliberadamente escrito **sem** `@Transactional` de classe (limpeza
+  manual via `@AfterEach`) para não mascarar esse tipo de regressão de novo — divergência
+  intencional do padrão `@Transactional`+rollback usado por `ContaControllerTest`/
+  `ServidorControllerTest`/`ProxyControllerTest` (DEC-42).
+
+*Negativas:*
+- Argumentos de configuração de macro (delay do AntiAFK, alvo do Follow) não sobrevivem a um
+  restart — limitação documentada, não implementada (exigiria mudança de contrato fora de escopo).
+- `atualizarConfiguracao(Bot)` faz um `SELECT` antes do `UPDATE` (load-then-mutate) a cada
+  transição de estado de bot (iniciar/parar/pausar/retomar/conectar/desconectar/trocar
+  proxy/autoreconnect) — mais I/O de banco que o CRUD simples de Conta/Servidor/Proxy, aceito
+  porque `Bot` tem ordens de grandeza mais transições de estado que os agregados já persistidos.
+- Rotação de proxy automática durante retries de reconexão (`GerenciadorDeReconexao.
+  rotacionarProxy`, chamada diretamente sobre `Bot.trocarProxy`, fora de `CasoDeUsoTrocarProxy`)
+  não persiste o novo proxy imediatamente — só na próxima escrita bem-sucedida via `CasoDeUsoConectarBot`
+  (consistência eventual, não uma inconsistência permanente).
+
+**Impacto por Camada:**
+- **Domain:** nenhuma mudança (`Bot`/`TarefaContinua`/demais tipos de `domain.bot` inalterados).
+- **Application:** porta nova `RepositorioDeBots` + record `BotPersistido` (`application.port`);
+  `CasoDeUsoCriarBot` ganha 2 overloads aditivos e o colaborador `RepositorioDeBots`;
+  `CasoDeUsoIniciarBot`/`PararBot`/`PausarBot`/`RetomarBot`/`DefinirAutoReconnect`/`TrocarProxy`/
+  `ConectarBot`/`DesconectarBot`/`RemoverBot` ganham o mesmo colaborador (só o construtor muda,
+  método público inalterado); `RestauradorDeBots` novo (`application.bootstrap`).
+- **Infrastructure:** `infrastructure.persistence.jpa` ganha `BotJpaEntity`/`BotMacroJpaEntity`/
+  `BotSpringDataRepository`/`BotMacroSpringDataRepository`; `RepositorioDeBotsJpa` novo
+  (`infrastructure.persistence`); `db/migration/V2__bots.sql` novo (tabelas `bots`/`bot_macros`);
+  `ConfiguracaoDePersistencia` ganha o bean `repositorioDeBots`; `ConfiguracaoDeConexao`/
+  `ConfiguracaoDeCasosDeUso` ajustados para injetar `RepositorioDeBots` nos Casos de Uso;
+  `ConfiguracaoDeRestauracao` nova (wiring de `RestauradorDeBots`).
+- **Interfaces:** `BotController` passa `contaId`/`servidorId` da requisição para o novo overload
+  de `CasoDeUsoCriarBot.criar`; `MacroController` ganha `RepositorioDeBots` como colaborador
+  (sincroniza macros após cada ativação/desativação) — nenhum endpoint/contrato REST alterado.
+
+**Relação com Decisões Anteriores:** Fecha a limitação "Bot só em memória" registrada implicitamente
+desde a **DEC-40** (que já registrava `Conta`/`Servidor`/`Proxy` como as únicas peças com
+persistência, e `Bot` como puramente in-memory) e não reaberta pela **DEC-42** (que fechou
+Conta/Servidor/Proxy mas deixou Bot explicitamente fora de escopo). Segue o mesmo padrão
+Port+Adapter+Flyway da **DEC-42**, adaptado para um agregado com máquina de estados em vez de CRUD
+simples. Não reabre nenhuma DEC de protocolo/domínio (DEC-01 a DEC-39) nem os contratos de API da
+DEC-40/DEC-41.
+
+**Impacto na Implementação Java:** 1 porta nova (`RepositorioDeBots`), 1 record novo
+(`BotPersistido`), 2 entidades JPA + 2 `JpaRepository` + 1 adapter novos, 1 migration Flyway
+(`V2__bots.sql`), 1 `ApplicationRunner` novo (`RestauradorDeBots`) + 1 classe de configuração nova
+(`ConfiguracaoDeRestauracao`), 9 Casos de Uso de Bot ajustados (novo colaborador, nenhuma assinatura
+pública alterada), `BotController`/`MacroController` ajustados. 1104→1109 testes automatizados (+5:
+`RepositorioDeBotsJpaTest` com 4 cenários incluindo o de regressão do bug de transação, mais ajustes
+de fakes em testes pré-existentes de Casos de Uso de Bot), 0 falhas, 0 erros, 3 skipped
+deliberadamente. Validação manual adicional obrigatória via `mvn spring-boot:run` real (JDK 21,
+PostgreSQL 18 local) + frontend real: 3 bots criados, 2 iniciados, 1 com AutoReconnect ligado,
+macros `antiafk`/`twerk` ativadas, processo derrubado via `taskkill` (não um shutdown gracioso) e
+religado do zero — os 3 bots confirmados restaurados com os mesmos `id`s/autoReconnect/macros, log
+de restauração confirmando as 3 reconstruções e a tentativa automática de reconexão do bot com
+AutoReconnect ligado, frontend exibindo os mesmos bots sem novo cadastro; exclusão de todos os bots
+ao final confirmada com sucesso (incluindo os que tinham macro ativa, validando o fix do bug de
+transação).
+
+**Data:** 2026-07-28
+
+**Responsável:** Mateus Botega (declarou nova fase do projeto — de "portar funcionalidades" para
+"produto utilizável no dia a dia" — e pediu persistência completa de Bot reutilizando os Casos de
+Uso existentes, sem alterar arquitetura/Ports/contratos REST e sem consultar o legado C#; validação
+manual de restart completo executada nesta sessão a pedido explícito do escopo, não apenas testes
+automatizados.)

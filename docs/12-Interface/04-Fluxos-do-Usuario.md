@@ -1,5 +1,17 @@
 # Especificação Funcional dos Fluxos do Usuário
 
+> **Nota (2026-07-28, EPIC-PROD-02)**: este documento foi escrito antes da implementação real do
+> frontend/backend e descreve um design aspiracional — rotas (`POST /api/v1/bots/connect`,
+> `/connect-batch`, `/system/status`), componentes (`SidebarBotList`, `ConsoleLogViewer` com chat,
+> `ProgressBar` de lote) e telas (Viewer 3D, formulário de conexão em lote) **não correspondem** ao
+> que existe hoje em `advancedbot-java`/`advancedbot-frontend`. Auditoria confirmou a divergência
+> (ver Milestone 44 em `11-Estado-Atual-Migracao.md`). O fluxo real e atual de criação de Bot está
+> documentado na seção 7 abaixo; o restante do documento permanece como referência de design
+> histórico, não como especificação vigente. Não reescrever o documento inteiro sem necessidade
+> explícita — seção 7 é a fonte de verdade para o fluxo de criação de Bot. Seção 8 (adicionada em
+> 2026-07-28, EPIC-PROD-03) documenta o Painel Operacional, tela real que passou a ser a padrão de
+> `/bots/:id`, substituindo a navegação diária entre as sub-abas antigas.
+
 ## 1. Introdução
 
 Este documento especifica detalhadamente os fluxos de navegação e operação da interface do sistema AdvancedBot.
@@ -631,4 +643,72 @@ Todos os fluxos de interface do sistema AdvancedBot devem atender estritamente a
 3. **Cancelamento de Operações Longas**: Qualquer tarefa que demande mais de 3 segundos para ser concluída deve oferecer um meio fácil e claro de cancelamento por parte do operador.
 4. **Preservação de Contexto e Estado**: Ao alternar entre páginas da aplicação e retornar, a interface deve preservar os filtros aplicados, os termos buscados, as seleções de linhas e a posição de rolagem das tabelas.
 5. **Estabilidade de Seleção**: A ordenação automática ou chegada de novos dados em tempo real não deve desselecionar um bot ou item que o operador esteja inspecionando no momento.
+
+---
+
+## 7. Fluxo Real Atual: Criar um Bot (EPIC-PROD-02, vigente)
+
+Substitui a seção 2.2 acima para fins de implementação — é o fluxo real, verificado manualmente contra
+`advancedbot-java`/`advancedbot-frontend` em execução.
+
+- **Objetivo**: Cadastrar um Bot pronto para operar (conta, servidor, proxy opcional, macro inicial
+  opcional, auto-reconnect) num único fluxo, reaproveitando Conta/Servidor já cadastrados quando
+  existirem e criando-os automaticamente quando não existirem.
+- **Pré-condições**: Backend Java em execução (`http://localhost:8080`), frontend servindo `/bots`.
+- **Passo a passo da interação**:
+  1. O operador acessa `/bots` e clica em "Novo bot" (`BotsPage.tsx`), abrindo `BotFormModal`.
+  2. Aba "Conta": escolhe "Conta cadastrada" (`Select` sobre `GET /api/v1/contas`) ou "Credenciais
+     manuais" (username/e-mail/senha inline).
+  3. Aba "Servidor": escolhe "Servidor cadastrado" (`Select` sobre `GET /api/v1/servidores`) ou
+     "Host/Porta manual" (host/porta inline).
+  4. Opcional: marca "Usar proxy" (host/porta/tipo), seleciona uma "Macro inicial" (catálogo real via
+     `GET /api/v1/macros`) e/ou marca "Auto reconnect".
+  5. Clica em "Criar bot" — um único `POST /api/v1/bots` (`CriarBotRequest`) é enviado.
+- **Componentes envolvidos**: `BotFormModal`, `Tabs`, `Select`, `Input`, `NumberInput`, checkboxes
+  nativos (sem componente `Checkbox` dedicado no Design System ainda).
+- **Comunicação real com o backend**: `POST /api/v1/bots` — `BotController.criar` resolve/persiste
+  Conta (`CasoDeUsoCriarConta`) e Servidor (`CasoDeUsoCriarServidor`) quando informados inline, monta
+  `ConfiguracaoProxy` (`ProxySupport`), cria o Bot (`CasoDeUsoCriarBot`) e aplica
+  `autoReconnect`/`macroInicial` (`CasoDeUsoDefinirAutoReconnect`/`MacroAtivacaoSupport`) — tudo na
+  mesma requisição, resposta `201` com `BotResponse` completo.
+- **Resultado esperado**: Bot criado e visível em `/bots`; Conta/Servidor usados (quando criados
+  inline) passam a existir em `/contas-servidores`, reaproveitáveis por outros bots.
+- **Erros reais**: `IllegalArgumentException` (400) se nem `servidorId` nem `host`+`port` forem
+  informados; `RecursoNaoEncontradoException` (404) se `contaId`/`servidorId` informado não existir.
+- **Sem fluxo de "conectar em lote"/Viewer 3D/chat no console de criação** — não implementado, fora do
+  escopo do EPIC-PROD-02 (ver GAPs registrados na Milestone 44).
+
+---
+
+## 8. Fluxo Real Atual: Painel Operacional (EPIC-PROD-03, vigente)
+
+Resolve o GAP #3 da Milestone 44 (painel unificado de estado). Fluxo real, verificado manualmente.
+
+- **Objetivo**: Acompanhar e operar um bot (status, console, vida/inventário, mundo) sem trocar de
+  aba — tela pensada pra operação contínua de dezenas de bots, não um agregador das 5 abas antigas.
+- **Pré-condições**: Bot já cadastrado (ver seção 7).
+- **Passo a passo da interação**:
+  1. O operador clica no username de um bot em `/bots` (`BotTable`) ou navega direto pra
+     `/bots/:id` — cai automaticamente na aba "Painel Operacional" (`DEFAULT_BOT_DETAILS_TAB`).
+  2. Coluna esquerda mostra de relance: estado de execução/sessão, conta (username), servidor
+     (host:port), proxy, auto-reconnect, macro(s) ativa(s) e os últimos comandos executados.
+  3. Centro: console em tempo real (logs via WS), campo de chat, campo de comando — mesmo
+     componente (`ConsolePanel`) usado pela aba "Console" standalone.
+  4. Coluna direita: vida/fome (XP indisponível, ver GAP abaixo)/coordenadas/dimensão, equipamento,
+     inventário (clique em slot já dispara a ação, mesmo padrão da aba "Inventário").
+  5. Rodapé: entidades próximas, jogadores online, consulta pontual de bloco por XYZ.
+  6. Tudo atualiza sozinho — WS para logs/comandos/estado de execução, polling curto (3-5s) pra
+     vida/coordenadas/entidades (sem WS dedicado no backend pra esses, GAP §8 pré-existente).
+- **Componentes envolvidos**: `PainelOperacionalPage`, `ConsolePanel` (novo, extraído de
+  `ConsolePage`), `BotStatusBadge`, `ItemSlot`/`InventorySlotGrid`, `DataTable`, `Card`.
+- **Comunicação com o backend**: nenhum endpoint novo — mesmos usados pelas 5 abas antigas
+  (`GET /bots/{id}`, `/logs`, `/estado`, `/mundo/*`, `/inventario/*`, `/macros`, `POST /commands`).
+- **Ações fora do Painel (continuam nas abas antigas, agora secundárias)**: transações de janela
+  avançadas (aceitar/recusar/limpar cursor/fechar), formulários completos de Ações (mover/olhar/
+  quebrar bloco/interagir com entidade), ativar macro com argumentos customizados, limpar logs.
+- **Erros reais**: `GET /estado`/`/mundo/*`/`/inventario/*` devolvem `409` quando o bot não está numa
+  sessão PLAY ativa — tratado como `EmptyState`/mensagem, nunca quebra a tela.
+- **GAP de backend confirmado**: XP não existe em nenhum lugar do domínio (protocolo 1.8 nunca
+  decodifica o pacote `SetExperience`) — exibido como "—" com tooltip explicativo, sem implementar
+  parsing de pacote novo (fora do escopo deste épico, que proíbe adicionar funcionalidade ao domínio).
 6. **Consistência Visual Integral**: Todos os fluxos funcionais descritos neste documento devem ser implementados utilizando exclusivamente os componentes atômicos, moleculares e organizacionais definidos no Design System (documento 03).

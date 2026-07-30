@@ -26,3 +26,4 @@ Este diretório descreve o comportamento observado no código-fonte C# para orie
 | Transporte e autenticação | [04-Rede/README.md](04-Rede/README.md) |
 | Codec/protocolo | [05-Protocolo-Minecraft/README.md](05-Protocolo-Minecraft/README.md) |
 | Migração alvo | [16-Arquitetura-Java.md](16-Arquitetura-Java.md) |
+| Homologação (backlog QA) | [21-Homologacao/01-Backlog-QA-Homologacao-Completa.md](21-Homologacao/01-Backlog-QA-Homologacao-Completa.md) |
