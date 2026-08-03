@@ -4568,3 +4568,135 @@ reaproveitado; (d) motor de propagação de luz para blocos alterados via delta 
 documentado como limitação em `SecaoDeChunk`/`ViewerWorldStore`).
 
 Itens marcados como resolvidos em [docs/21-Homologacao/01-Backlog-QA-Homologacao-Completa.md](../21-Homologacao/01-Backlog-QA-Homologacao-Completa.md). GAP-03 e MPF-01 seguem em aberto, adiados por decisão de produto/arquitetura pendente.
+
+---
+
+### TarefaMineracaoTrap (2026-08-03) — nova macro de mineração automática em trap de cobblestone
+
+Implementação de `TarefaMineracaoTrap` a partir da especificação já aprovada em
+`docs/10-Macros/10.2-Macro-Mineracao-Trap.md`. Sem equivalente no legado C# (Fonte da Verdade
+`Projeto Adv 2.4.5` não contém nenhum `CommandMinerTrap`/`AutoMiner` de corredor) - mesma situação
+de `TarefaMobSimples` (nova macro construída direto sobre a spec de docs-reescrita, sem conversão
+de código legado).
+
+**Novo** (`advancedbot-java/src/main/java/com/advancedbot/domain/bot/`):
+- `TarefaMineracaoTrap.java` - FSM de 9 estados fiel à spec (`INICIALIZAR` até `RETORNAR_MINERACAO`),
+  mesmo padrão estrutural de `TarefaMobSimples` (`Configuracao` record + `TarefaComConfiguracao`,
+  `iniciarEspera`/`aguardando`, `AbridorDeBau`/`MacroUtils` reutilizados). Acúmulo de força de
+  quebra reaproveita `CalculadoraDeQuebraDeBloco` no mesmo formato de `TarefaMineracao.quebrar()`.
+
+**Decisões de implementação sem precedente direto (registradas aqui, sem DEC formal aberta -
+escopo restrito a esta macro nova, sem alterar nenhuma primitiva de `SessaoDeJogo`):**
+1. **Movimento sem `GuiaDeCaminho`/pathfinding**: como o túnel é reto ao longo do eixo X e a mira
+   (Sul/Norte, eixo Z) é perpendicular ao deslocamento, a "caminhada" lateral é só o avanço/recuo
+   direto de `x` em direção a `xFim`/`xInicio` via `moverEOlhar` (Z travado no valor registrado em
+   cada extremidade), com velocidade constante própria (`VELOCIDADE_STRAFE_BLOCOS_POR_TICK = 0.13`)
+   - nenhuma outra macro hoje anda sem pathfinding, `velocidadeHorizontal()` de `SessaoDeJogo`
+   depende de `onGround` (motor de física vertical, DEC-32/35) nunca acionado por esta macro.
+2. **Anti-stuck por posição estática**: sem precedente em nenhuma outra Tarefa (mais próximo:
+   `TarefaMineracao.TIMEOUT_QUEBRA_MS`, que é timeout de quebra individual, não de posição) - 5s sem
+   variação de `x` acima de um epsilon aciona re-teleporte via `homeInicio`/`homeFim` (Seção 5 da
+   spec, "Bloqueio Físico no Corredor").
+3. **Baú cheio ao descarregar**: a spec pede "tentar o próximo baú adjacente"; implementado como
+   desativação segura da macro (mesmo padrão de "sem picareta nova no baú"), já que
+   `MacroUtils.localizarBauProximo` não tem hoje uma variante "excluir o baú já tentado" - manter o
+   fallback documentado é preferível a introduzir busca multi-baú sem consumidor validado.
+4. **IDs de bloco/item literais** (cobblestone id 4, picareta de diamante id 278) - mesma convenção
+   já usada em `TarefaMineracao`/`TarefaMobSimples` (ids vanilla hardcoded, sem enum de blocos/itens
+   centralizado no domínio Java ainda).
+
+**Alterado:**
+- `interfaces/comando/ComandoMineracaoTrap.java` (novo) - toggle sobre `TarefaMineracaoTrap`, mesmo
+  padrão de `ComandoMobSimples` (resolve `ConfiguracaoDeMacro` persistida por id/nome, alias
+  `minerartrap`).
+- `infrastructure/config/ConfiguracaoDeComandos.java` - registra `ComandoMineracaoTrap` no
+  `GerenciadorDeComandos`.
+
+**Validações executadas:** `mvnw compile` e `mvnw test` limpos (JDK 21, `.jdks/ms-21.0.9`) - suíte
+completa existente sem regressão. Sem teste unitário dedicado para `TarefaMineracaoTrap` ainda
+(pendente desta sessão) e **sem validação ao vivo contra servidor real** - o operador vai testar a
+macro em jogo e ajustar comportamento a partir daí.
+
+**Próximo passo recomendado:** testar `$minerartrap`/`/minerartrap` contra a trap real, ajustar
+`VELOCIDADE_STRAFE_BLOCOS_POR_TICK`/`pitchMine`/`ALCANCE_MINERACAO` conforme o comportamento
+observado, e então adicionar teste unitário cobrindo a FSM (mesmo padrão de
+`TarefaMobSimplesTest`, se existir).
+
+**Correção (mesma sessão, validação ao vivo):** primeiro teste real mostrou `xInicio`/`xFim`
+idênticos e `MINERAR_SUL_DIREITA`/`NORTE_ESQUERDA` alternando infinitamente no mesmo tick (chegada
+a &lt;1 bloco de si mesmo). Causa: `REGISTRAR_COORDS_INICIO`/`FIM` liam `sessaoDeJogo.x/y/z()`
+só com base num timer fixo (`delayTeleporteMs`) após enviar o `/home`, sem confirmar que o
+teleporte de fato já tinha sido processado pelo servidor - se a resposta demorasse mais que o
+delay, capturava a posição ANTES do teleporte, duas vezes seguidas. Corrigido substituindo o gate
+por tempo (`iniciarEspera`/`aguardando`) por `iniciarTeleporte`/`aguardandoTeleporte` em todo
+teleporte que precisa da posição pós-chegada (calibração, entrada em mineração, re-teleporte
+anti-stuck, ida pro baú): grava a posição ANTES de enviar o comando e só libera o próximo estado
+quando `sessaoDeJogo.x/y/z()` de fato mudar além de 0.5 bloco (ou um teto de segurança de
+`max(delayTeleporteMs*2, 15s)` estourar, com aviso ao operador nesse caso). Também adicionada
+validação de distância mínima do túnel (`DISTANCIA_MINIMA_TUNEL = 5`) em `registrarCoordsFim` -
+se início/fim caírem no mesmo ponto (homes mal configurados no servidor), a macro se desativa com
+mensagem clara em vez de entrar no ping-pong. `mvnw compile`/`test` limpos após o ajuste.
+
+**Segunda correção (mesma sessão):** com o ping-pong resolvido, andar funcionou mas a picareta
+nunca quebrava nenhum bloco (inventário parado por 2min de teste ao vivo). Causa: mineração usava
+`tracarRaioParaBlocos` com `pitchMine` fixo (~10°) - com o olho do bot 1.62 acima dos pés
+(`ALTURA_DO_OLHO`) e a parede de 1 bloco de altura imediatamente ao lado (Z±1), um raio quase
+horizontal passa por CIMA do topo da parede em vez de acertar a face lateral (só um pitch íngreme,
+~50°+, alcançaria a face nessa distância - o que já não seria "olhar pro Sul/Norte"). Corrigido
+trocando o raycast por mira direta no bloco-alvo calculado (coluna X atual, Z+1 Sul/Z-1 Norte) via
+`olharParaBloco`, mesma primitiva que `TarefaMineracao` já usa - `minerarBloco()` substitui
+`minerarParedeAFrente()`, e a caminhada agora só avança depois que o bloco à frente cai (antes
+avançava e minerava em paralelo sem geometria válida). De caminho, `forcaDeQuebra` passou a ler
+Haste/Mining Fatigue reais do próprio bot (`SessaoDeJogo.efeito(3)`/`efeito(4)`, Domínio "Efeitos"
+DEC-39) em vez do sentinela `-1` fixo herdado de `TarefaMineracao` - atende o item 5 da spec
+("Integração com Haste II"), que dependia do sinalizador ativo na chunk ser refletido na
+velocidade de quebra. `mvnw compile`/`test` limpos após o ajuste; validação ao vivo ainda pendente
+do lado do operador.
+
+**Terceira investigação (mesma sessão) - "mundo vazio" descartado como bug de código.** Ainda sem
+quebrar bloco, mira corrigida (feet+1) não resolveu - `MacroUtils.itemNaMao`/`contadorBalancoDeBraco`
+confirmava via `GET /estado` que a mira nunca sequer executava `balancarBraco()`. Investigação via
+`GET /mundo/bloco?x&y&z` revelou que TODA a área 5x5x5 ao redor da posição real do bot (confirmada
+`CONNECTED` e se movendo de verdade via `GET /bots`) retornava ar (`blockId=0`), e blocos distantes
+retornavam ids fora da faixa 0-255 (ex.: 1074, 3532) - inicialmente suspeito de bug de decodificação
+de `SecoesDeChunkCodec`/`MapChunkBulkCodec` (formato não-vanilla).
+
+Diagnóstico temporário (`System.err`, removido ao final - ver commits desta sessão) instrumentou
+`ChunkDataCodec`/`MapChunkBulkCodec` com dump bruto (hex + tamanho calculado vs. real) em 3 rodadas
+de reinício+reconexão do bot real. Resultado **descartou completamente a hipótese de bug**:
+- IDs fora de 0-255 são decodificação CORRETA de um id de 12 bits não-vanilla (1074 = 67·16+2,
+  documentado como comportamento deliberado no cabeçalho de `SecoesDeChunkCodec.java:9-12` - servidor
+  customizado usa ids de bloco acima de 255, não é erro de shift).
+- `bytesRestantes()` (leitor exposto temporariamente) confirmou **0 bytes sobrando** ao final de
+  todo Map Chunk Bulk decodificado - a matemática de `calcularTamanho` bate byte-a-byte com o frame
+  real, refutando a hipótese de desalinhamento de formato.
+- A coluna do próprio bot (`chunkX=74219,chunkZ=0`) tinha o bit da seção 12 (y=192-207, cobre a
+  posição real do bot em y=202) **setado na bitmask**, mas o dump bruto no offset exato dessa seção
+  mostrou **32 bytes zerados de verdade, enviados assim pelo próprio servidor** - ar real, não
+  artefato de leitura.
+
+Conclusão: o cliente reflete fielmente o estado que o servidor está mandando; a "trap" na posição
+onde o bot está simplesmente não tem bloco sólido ali segundo o servidor. Combinado com
+`onGround` sempre `false` em toda a sessão e o Debug 2D mostrando só "vazio" ao redor - o bot está
+genuinamente flutuando num vazio, não dentro de uma trap de cobblestone real. Hipóteses restantes,
+fora do escopo de código (nenhuma decisão arquitetural pendente aqui): (a) `/home minerarinicio`/
+`minerarfim` apontam pra coordenada errada/desatualizada no servidor; (b) a "trap" é um plot que
+exige alguma ativação/posse não satisfeita por esta conta; (c) a posição salva pelo servidor pro
+reconnect não é a mesma da trap. Instrumentação removida por completo (`ChunkDataCodec`/
+`MapChunkBulkCodec`/`LeitorDePacote.bytesRestantes()` voltaram ao estado anterior a esta sessão) -
+`mvnw compile`/`test` limpos. Próximo passo é do operador: confirmar visualmente no cliente Minecraft
+real se há de fato cobblestone na posição reportada por `GET /estado`.
+
+**Causa raiz confirmada e DEC aberta (mesma sessão, continuação):** operador confirmou via F3 do
+cliente real (`Minecraft 1.8-forge1.8-11.14.4.1563/fml,forge`, 3 mods) bloco `minecraft:stone`
+sólido exatamente na coordenada que nosso `Mundo.blocoEm` reportava como ar. Captura de pacote
+bruta (Wireshark) decodificada em Python, independente do pipeline Java, confirmou 0 erros de
+alinhamento/desalinhamento em ~7500 frames reais - a causa não é decodificação. O servidor-alvo é
+Forge (ou híbrido), e o bot nunca implementou o handshake de Plugin Channel (`MC|Brand`/`FML|HS`,
+pacote `0x3F`) que um cliente real completa no login - padrão reproduzido de forma idêntica em 2
+contas distintas (`Solk`/`SwAFK_1`) e 2 dimensões (0/27): terreno natural sempre sincroniza,
+conteúdo construído pelo jogador nunca sincroniza para o bot. Ver **DEC-44**
+(`01-Decisoes-Arquiteturais.md`) para o diagnóstico completo, evidências e decisão de adiar a
+implementação do handshake para sessão dedicada (fora de escopo desta sessão - mudança de protocolo
+com risco de quebrar conexões existentes se malfeita). `TarefaMineracaoTrap` está com FSM/mira/
+teleporte corretos mas **não pode ser validada ao vivo** neste servidor até a DEC-44 ser resolvida.
