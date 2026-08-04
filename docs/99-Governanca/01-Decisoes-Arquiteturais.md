@@ -2319,3 +2319,136 @@ futuro a ser aberto em sessão própria.
 real; investigação de causa raiz conduzida a pedido explícito ("vamos fazer todas as correções
 necessárias nesta sessão"), com decisão final de documentar e adiar a implementação do handshake
 para sessão dedicada, dado o escopo/risco de uma mudança de protocolo malfeita.)
+
+> **Nota de atualização (2026-08-04, sessão seguinte):** o diagnóstico acima está **superado por
+> DEC-45**. A causa raiz real não era ausência de handshake FML/Forge — era um bug de layout em
+> `SecoesDeChunkCodec` (campo vs. seção), que o teste de "bytes restantes == 0" desta sessão nunca
+> poderia ter detectado (os dois layouts têm o mesmo tamanho total). Esta DEC-44 permanece registrada
+> por completo, sem edição, por disciplina de nunca sobrescrever histórico — ver DEC-45 para a causa
+> raiz real, a correção aplicada e a validação ao vivo que a confirma.
+
+---
+
+### DEC-45 — Causa Raiz Real da Divergência de Sincronização de Mundo Encontrada e Corrigida: Layout Incorreto em `SecoesDeChunkCodec` (Supera DEC-44)
+
+**Contexto:** Sessão de continuação, iniciada para *provar experimentalmente* (instrumentação
+temporária + logs, sem implementar nada até confirmar) a hipótese de auditoria original do operador:
+divergência de ~3 blocos entre a posição real de blocos no mundo e o que `Mundo.blocoEm` retornava
+para o bot `Solk`. A instrumentação (`atualizarPosicao`/`aplicarFisica`/`resolverColisao`) **refutou**
+a hipótese inicial (corrida entre física local e chunk ainda não carregado — chunk sempre esteve
+presente), mas revelou um bug real e distinto: o servidor reancora a posição do bot via
+`PlayerPositionAndLook` repetido (padrão de "cage"/pool de espera), e `atualizarPosicao` nunca
+zerava `motionX/Y/Z` do motor de física local — gravidade acumulava silenciosamente atrás de cada
+correção até se manifestar como uma queda de ~136 blocos sem oposição. Corrigido (`motionX/Y/Z = 0`
+em toda correção de posição do servidor).
+
+Após esse fix, o operador reportou — via F3 do cliente real e via uma ferramenta de consulta
+`GET /mundo/bloco?x&y&z` — que um bloco sólido genuíno (`Oak Wood Planks`, id 5) na trap ainda
+retornava ar (`blockId=0`) do lado do bot, **contradizendo diretamente o diagnóstico de DEC-44**
+(que havia descartado bug de decodificação com base em "0 bytes restantes ao final do payload").
+Nova instrumentação (contagem de blocos não-ar por seção recebida, antes de qualquer processamento
+de domínio) mostrou que a seção que continha a coordenada exata do piso chegava com **~300-400
+blocos não-ar reais** (não vazia) — mas o bloco exato ainda resolvia para ar. Decompondo os "ids"
+retornados de volta para os bytes brutos (`id=2184,metadata=8` → `0x8888`; `id=2730,metadata=10` →
+`0xAAAA`; `id=3003,metadata=11` → `0xBBBB`) revelou um padrão de **nibble repetido**, assinatura
+clássica de dado de **luz** (block light/sky light, valores 0-15 por nibble) vazando para dentro do
+parsing de id/metadata — sintoma de layout de campo errado, não de erro de cursor total (que o teste
+de "bytes restantes == 0" de DEC-44 nunca capturaria, porque os dois layouts têm exatamente o mesmo
+tamanho total em bytes).
+
+Confirmado contra a especificação oficial do protocolo (wiki.vg, Chunk Format, protocolo 47/1.8):
+> "First, all of the chunk sections' blocks are stored, followed by the sections' block light and
+> finally the sections' skylight."
+
+Ou seja, o layout real do wire é **por campo** (todos os arrays de id+metadata de todas as seções
+presentes primeiro, depois todos os arrays de block light, depois todos os de sky light) — não
+**por seção** (id+metadata+block light+sky light de uma seção completa, depois da próxima) como
+`SecoesDeChunkCodec.decode()`/`encode()` implementavam desde sempre. Os dois layouts produzem o
+**mesmo tamanho total** em bytes (por isso nenhum teste de "sobrou/faltou byte" jamais acusou nada,
+em nenhuma das duas sessões) — só a ordem interna diverge. A 1ª seção presente sempre bate por
+coincidência de offset (0 nos dois esquemas); o erro acumula a partir da 2ª seção em diante, e fica
+severo o bastante para invadir a região de dados de luz especificamente depois de um **gap** de
+seções ausentes na bitmask (máscara esparsa, comum em construções elevadas isoladas do terreno) —
+exatamente o padrão da trap que originou a DEC-44.
+
+**Legado consultado:** Nenhum equivalente direto aproveitável — o C# legado usa outro layout (trunca
+id para byte, sem o campo de luz retido do jeito que o Java faz, ver cabeçalho de
+`SecoesDeChunkCodec.java`). A fonte da correção é a especificação oficial do protocolo (wiki.vg),
+não o legado.
+
+**Decisão Tomada:** Corrigir `SecoesDeChunkCodec.decode()`/`encode()` para o layout real (3 passes
+por campo: ids+metadata de todas as seções presentes, depois block light de todas, depois sky light
+de todas se aplicável). Isso **supera DEC-44**: o handshake `FML|HS`/`Custom Payload` **não é
+necessário** para resolver a sincronização de mundo — o bug real e único era este layout de codec.
+DEC-44 permanece registrada por completo (não editada, não apagada — só recebeu a nota de
+atualização acima) por disciplina de nunca sobrescrever histórico.
+
+Como consequência direta, revertida nesta mesma sessão: a mitigação cosmética de DEC-44 em
+`TarefaMineracaoTrap.localizarAlturaDaParede` (varredura ampla de Y, feet-2 a feet+6) voltou a usar
+`feet+1` fixo — com o layout de chunk corrigido, a altura real volta a bater exatamente com a
+posição de projeto da trap. Investigação adicional ao vivo revelou uma segunda característica real
+desta trap especificamente (não um bug): é um gerador de pedregulho cujo poço fica mais afastado do
+corredor de trânsito do que 1 bloco (confirmado em `1187531,203,17`, ~3 blocos de distância em Z) —
+adicionada varredura de distância em Z (1 a 4 blocos) em `localizarAlturaDaParede`, mantendo a altura
+fixa em `feet+1`.
+
+**Evidência de validação:**
+- Testes de round-trip existentes (`ChunkDataCodecTest`/`MapChunkBulkCodecTest`) continuaram
+  passando após o fix — esperado, pois testam `encode()`+`decode()` da mesma implementação
+  (auto-consistentes mesmo quando os dois erram do mesmo jeito; ver risco residual abaixo).
+- Validação ao vivo pós-fix: `GET /mundo/bloco?x=1187506&y=201&z=14` (mesma coordenada que antes
+  retornava `blockId=0`) passou a retornar `Bloco[id=5]` (Oak Wood Planks) sólido, batendo com o F3
+  do cliente real.
+- Operador confirmou ao vivo: conta andando e quebrando pedregulho corretamente na trap real
+  (`TarefaMineracaoTrap` validada em produção pela primeira vez).
+- `mvn compile`/`mvn test` (suíte completa) permanecem verdes em todas as etapas desta sessão.
+
+**Risco residual registrado (pendência para sessão futura):** os testes de round-trip existentes
+são estruturalmente cegos a esta classe de bug — uma regressão futura que reintroduzisse o layout
+por-seção passaria despercebida pelos mesmos testes, pois eles nunca comparam contra um payload de
+servidor real. Recomenda-se, em sessão futura de testes, adicionar um teste "golden file" com bytes
+brutos reais de um Map Chunk Bulk capturado uma vez (Wireshark) e versionado, decodificado só pelo
+`decode()` (sem passar pelo `encode()` correspondente) para pegar essa classe de regressão.
+
+**Consequências:**
+
+*Positivas:*
+- Causa raiz real corrigida na origem — não é mais necessário implementar o handshake FML/Forge
+  (escopo grande, adiado indefinidamente por DEC-44) só para destravar sincronização de mundo.
+- `TarefaMineracaoTrap` validada ao vivo pela primeira vez contra `olimpo.clmc.com.br`.
+- DEC-44 permanece como registro histórico honesto de um diagnóstico bem-intencionado, mas com um
+  ponto cego de teste (validava só o total de bytes, nunca a ordem interna dos campos).
+
+*Negativas:*
+- Risco residual de regressão futura não coberto por teste golden-file (pendência registrada acima).
+- Frontend (`ChunkSnapshotDto`/`chunkDecode.ts`) não foi afetado por este bug (usa um formato interno
+  próprio, não o layout de rede do protocolo 1.8 - ver cabeçalho de `ChunkSnapshotDto.java`), mas
+  merece auditoria de confirmação em sessão futura pela mesma classe de erro, já que segue o mesmo
+  princípio de "seções concatenadas".
+
+**Impacto por Camada:**
+- **Domain (`domain.protocol.v1_8`):** `SecoesDeChunkCodec.java` — `decode()`/`encode()` reescritos
+  em 3 passes por campo.
+- **Domain (`domain.bot`):** `SessaoDeJogo.java` (`atualizarPosicao` zera `motionX/Y/Z` na correção
+  de posição do servidor); `TarefaMineracaoTrap.java` (`localizarAlturaDaParede` volta a `feet+1`
+  fixo + varredura de distância em Z de 1 a 4 blocos, substituindo a mitigação cosmética de DEC-44).
+- **Frontend (`advancedbot-frontend`):** `chunkMesher.ts` — atlas de textura de água/lava corrigido
+  (`water_still`/`lava_still` nunca eram registrados no atlas; adicionado suporte a
+  `water_flow`/`lava_flow` para água/lava fluindo, escolhido pelo id exato 8/9/10/11); novos
+  `SignLayer.tsx`/`SignModel.tsx`/`assets/signBlocks.ts`/`assets/signTexture.ts` — renderer de placa
+  (id 63 em pé / 68 de parede), mesmo padrão arquitetural de `ChestLayer.tsx`/`ChestModel.tsx` (block
+  entity sem blockstate/model, texto da placa fora de escopo — só geometria/posição/orientação).
+
+**Relação com Decisões Anteriores:** **Supera DEC-44** (handshake FML/Forge não é necessário — DEC-44
+mantida como registro histórico, não apagada, ver nota de atualização inserida no corpo dela). Não
+reabre nenhuma outra DEC.
+
+**Impacto na Implementação Java:** `SecoesDeChunkCodec.java` corrigido; `mvn compile`/`test` (suíte
+completa) limpos em todas as etapas. Nenhum novo `Packet`/`Codec`/`Port` — mudança interna ao codec
+já existente.
+
+**Data:** 2026-08-04
+
+**Responsável:** Mateus Botega (sessão de continuação da validação ao vivo de `TarefaMineracaoTrap`,
+com auditoria de causa raiz solicitada explicitamente e validada experimentalmente antes de qualquer
+implementação, conforme protocolo de investigação acordado no início da sessão.)

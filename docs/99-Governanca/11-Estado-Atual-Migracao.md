@@ -4700,3 +4700,163 @@ conteúdo construído pelo jogador nunca sincroniza para o bot. Ver **DEC-44**
 implementação do handshake para sessão dedicada (fora de escopo desta sessão - mudança de protocolo
 com risco de quebrar conexões existentes se malfeita). `TarefaMineracaoTrap` está com FSM/mira/
 teleporte corretos mas **não pode ser validada ao vivo** neste servidor até a DEC-44 ser resolvida.
+---
+
+## Atualização 2026-08-04 — Causa raiz real encontrada e corrigida (supera o bloqueio de DEC-44)
+
+Sessão de continuação da investigação acima. Objetivo inicial: provar experimentalmente (log
+instrumentado, sem implementar nada até confirmar) a hipótese de corrida entre física local e chunk
+ainda não carregado. Resultado: hipótese **refutada** (chunk sempre presente), mas revelou um bug
+real e diferente — `SessaoDeJogo.atualizarPosicao` nunca zerava `motionX/Y/Z` do motor de física
+local ao aplicar uma correção de posição do servidor; num servidor que reancora posição via
+`PlayerPositionAndLook` repetido (padrão "cage"), gravidade acumulava silenciosamente atrás de cada
+correção até se manifestar como queda de ~136 blocos sem oposição. Corrigido.
+
+Investigação seguinte, motivada por relato do operador (bloco sólido real confirmado via F3 do
+cliente oficial que o bot ainda reportava como ar mesmo pós-fix acima), **contradisse o diagnóstico
+de DEC-44** (que havia atribuído o problema a ausência de handshake FML/Forge). Nova instrumentação
+revelou que os "ids" retornados para blocos da trap, quando decompostos de volta para bytes brutos,
+formavam um padrão de nibble repetido (`0x8888`, `0xAAAA`, `0xBBBB`) — assinatura de dado de **luz**
+vazando para o parsing de id/metadata. Confirmado contra a especificação oficial do protocolo
+(wiki.vg, Chunk Format): o layout real do wire é **por campo** (todos os ids de todas as seções,
+depois toda luz de bloco, depois todo sky light) — não **por seção**, como `SecoesDeChunkCodec`
+implementava. Os dois layouts têm o mesmo tamanho total em bytes, por isso nenhum teste de "bytes
+restantes" (nem o desta sessão, nem o de DEC-44) jamais capturou o problema.
+
+**Corrigido:** `SecoesDeChunkCodec.decode()`/`encode()` reescritos para o layout real (3 passes por
+campo). **Isso supera DEC-44** — o handshake FML/Forge não é necessário para resolver a sincronização
+de mundo. Ver **DEC-45** (`01-Decisoes-Arquiteturais.md`) para o diagnóstico completo, evidências e
+validação. DEC-44 permanece registrada por completo (não editada), só recebeu uma nota de
+atualização apontando para DEC-45.
+
+Consequências diretas, também corrigidas nesta sessão:
+- `TarefaMineracaoTrap.localizarAlturaDaParede` voltou a usar `feet+1` fixo (a mitigação cosmética de
+  DEC-44, varredura ampla de Y, não é mais necessária com o layout de chunk corrigido) e ganhou
+  varredura de distância em Z (1 a 4 blocos) — esta trap específica é um gerador de pedregulho cujo
+  poço fica mais afastado do corredor de trânsito do que 1 bloco.
+- **`TarefaMineracaoTrap` validada ao vivo pela primeira vez** contra `olimpo.clmc.com.br`: conta
+  andando e quebrando pedregulho corretamente. Bloqueio de DEC-44 removido.
+- Frontend (`advancedbot-frontend`): `chunkMesher.ts` corrigido para registrar `water_still`/
+  `lava_still`/`water_flow`/`lava_flow` no atlas de textura (nunca eram carregados, água/lava sempre
+  caíam no fallback "textura faltando" apesar dos PNGs existirem). Novo renderer de placa (id 63 em
+  pé / 68 de parede) — `SignLayer.tsx`/`SignModel.tsx`/`assets/signBlocks.ts`/`assets/signTexture.ts`
+  — mesmo padrão arquitetural de `ChestLayer.tsx`/`ChestModel.tsx` (block entity sem blockstate/
+  model; texto da placa fora de escopo, só geometria/posição/orientação).
+
+Validação: `mvn compile`/`mvn test` (backend, suíte completa) e `npm run typecheck`/`vitest run`
+(frontend) limpos em todas as etapas. Nenhuma instrumentação temporária restou no código (removida
+ao final de cada rodada, conforme protocolo de investigação acordado no início da sessão).
+
+**Pendência registrada para sessão futura:** os testes de round-trip de
+`ChunkDataCodecTest`/`MapChunkBulkCodecTest` são estruturalmente cegos à classe de bug corrigida
+nesta sessão (testam `encode()`+`decode()` da mesma implementação, auto-consistentes mesmo quando os
+dois erram do mesmo jeito). Recomenda-se um teste "golden file" com bytes reais de um Map Chunk Bulk
+capturado ao vivo (Wireshark), decodificado só pelo `decode()`, para cobrir regressão futura desta
+classe específica de erro.
+
+---
+
+## Atualização 2026-08-04 — GerenciadorDeMkb: infraestrutura reutilizável de armazenamento em baús (MKB)
+
+**Motivo:** todas as macros que precisam guardar/retirar item de um ponto fixo de baús (mineração,
+pesca etc.) reimplementavam essa lógica de forma ad-hoc (ex.: `TarefaAutoFish.detectarBaus`, varredura
+dinâmica que só tenta o primeiro candidato). O responsável pediu um sistema MKB genérico e reutilizável:
+fila de baús de reposição (servida sob demanda) + fileiras de baús de armazenamento que se expandem
+lateralmente conforme lotam.
+
+**Achado antes da implementação:** o legado C# de fonte da verdade (`Projeto Adv 2.4.5/
+AdvancedBot.Client.Commands/Solk/MacroUtils.cs:79`, `LoadCheatsMKB`) só faz varredura dinâmica de baú
+por proximidade (raio fixo em X/Y/Z) — não existe no legado nenhum conceito de fileira/coluna/baú de
+reposição vs. baú de armazenamento. Não há também doc de spec prévia em `docs-reescrita/docs/
+10-Macros`. Confirmado com o responsável (nesta sessão) que a implementação segue direto para código,
+com este registro documentando o comportamento depois — mesma exceção já usada para
+`TarefaMineracaoTrap` quanto à ausência de precedente, mas sem o passo de spec-doc prévia dessa vez.
+
+**Entregue:**
+- `Coordenada` (`domain.bot`, record `x,y,z`) — trio de coordenadas usado só para a aritmética de
+  layout de MKB; deliberadamente distinto de `PontoDeCaminho` (que carrega estado mutável de
+  pathfinding e não deve ser reaproveitado como carregador de posição genérico).
+- `MkbConfiguracao` (`domain.bot`, record) — layout de uma "casa de baús": `homeComando`, base+passo+
+  quantidade da fila de reposição, base+passo+baús-por-fileira+passo-de-fileira+limite-de-fileiras do
+  armazenamento. `bauDeReposicao(indice)`/`bauDeArmazenamento(fileira, coluna)` resolvem a coordenada
+  de qualquer baú da grade a partir da base + passos configurados.
+- `GerenciadorDeMkb` (`domain.bot`) — componente poll-based reutilizável, mesmo padrão de
+  `AbridorDeBau`: cada Tarefa dona de uma instância própria, chama `guardarItem(sessaoDeJogo, itemId)`
+  ou `retirarItem(sessaoDeJogo, itemId, durabilidadeMaxima)` uma vez por tick (mesmos argumentos a cada
+  chamada da mesma operação) até receber algo diferente de `AGUARDANDO`. Internamente compõe:
+  `GuiaDeCaminho` (DEC-35, caminhada até o baú-alvo, dispensa reimplementar strafe manual) +
+  `AbridorDeBau` (abertura) + transferência direta via `SessaoDeJogo.moverItem`/`localizarEspacoLivreNaJanela`
+  (mesmo padrão de `TarefaMineracaoTrap.abrirBausDescarregar`, varredura de slots 9-35 sem tocar a
+  hotbar). Aceita uma ou mais `MkbConfiguracao` (construtor vararg) para suportar múltiplas "casas de
+  baú".
+
+  Regras de negócio validadas com o responsável nesta sessão:
+  1. Reposição só ocorre sob demanda (nunca automática ao passar pela MKB).
+  2. Armazenamento vai sempre para o primeiro baú com espaço livre, varrendo a fileira atual da
+     esquerda pra direita.
+  3. Baú cheio avança coluna; fileira cheia avança fileira (design pensado para fileiras "infinitas" —
+     o operador sempre constrói mais fileiras ao lado antes de esgotar as existentes).
+  4. Ao atingir `limiteDeFileiras` (quando configurado > 0), tenta a próxima `MkbConfiguracao` da lista;
+     se não houver mais nenhuma, reseta para a fileira 0 da primeira (baús antigos podem ter sido
+     esvaziados manualmente).
+  5. Salvaguarda `MAX_AVANCOS_POR_OPERACAO = 500` (não é regra de negócio, só teto de segurança contra
+     loop sem fim em caso de configuração quebrada ou baús genuinamente esgotados em todas as MKBs).
+
+**Nenhuma Tarefa existente foi alterada** — capacidade puramente aditiva, ainda sem nenhum consumidor
+real (`TarefaAutoFish`/`TarefaMineracaoTrap` continuam com suas próprias lógicas de baú, inalteradas).
+
+**Validação executada:** `mvnw compile`/`mvnw test-compile` limpos. Nenhum teste dedicado foi escrito
+nesta sessão para `GerenciadorDeMkb`/`MkbConfiguracao`/`Coordenada`.
+
+**Riscos/limitações conhecidas:**
+- Sem teste automatizado e sem validação ao vivo contra um servidor real — comportamento (avanço de
+  fileira, reposição cíclica, reset entre MKBs) só foi verificado por leitura de código.
+- Nenhuma macro existente foi migrada para usar `GerenciadorDeMkb` — é infraestrutura pronta, não uma
+  feature ponta-a-ponta ainda visível para o operador.
+
+**Próximo passo recomendado:** escrever `GerenciadorDeMkbTest` cobrindo avanço de coluna/fileira,
+transição entre múltiplas MKBs e o ciclo de reposição; e escolher a primeira Tarefa real para consumir
+o componente (candidata natural: migrar `TarefaAutoFish.detectarBaus`/`GUARDAR_ITENS_ABRINDO_BAU` para
+`GerenciadorDeMkb`, ou usá-lo diretamente na próxima macro nova que precisar de baú de reposição/
+armazenamento estruturado).
+
+---
+
+## Atualização 2026-08-04 (continuação) — TarefaMobSimples migrada para GerenciadorDeMkb
+
+**Motivo:** o responsável apontou que a troca de espada de `TarefaMobSimples` ainda buscava "um baú
+específico" via `MacroUtils.localizarBauProximo` (varredura dinâmica de UM baú no cubo [-2,2) ao redor
+dos pés, sem fila/substituta em mais de um lugar) - primeiro consumidor real de `GerenciadorDeMkb`.
+
+**Entregue:**
+- `GerenciadorDeMkb` ganhou um terceiro modo (`Modo.TROCAR_REPOSICAO`, método `trocarNaReposicao`):
+  devolve o item gasto do slot de origem informado (se o itemId bater) e puxa uma substituta na mesma
+  visita ao baú, fiel ao padrão `TROCAR_ESPADA_NO_BAU` original (o mesmo baú de reposição serve tanto
+  de estoque quanto de descarte do item usado - diferente de `guardarItem`, que vai pra grade de
+  armazenamento). Sem substituta na posição atual, avança a fila cíclica de reposição
+  (`avancarReposicao`, já existente, reaproveitada sem alteração).
+- `TarefaMobSimples`: estados `IR_PARA_BAU_ESPADAS`/`TROCAR_ESPADA_NO_BAU` (varredura dinâmica +
+  `AbridorDeBau` manual) substituídos por um único `TROCANDO_ESPADA_NA_MKB`, que teleporta, captura a
+  posição de pouso como base da fila de reposição e delega tudo a `gerenciadorDeMkb.trocarNaReposicao`.
+  `Configuracao` ganhou `reposicaoOffsetX/Y/Z` (deslocamento do primeiro baú em relação ao pouso do
+  teleporte, não mais uma varredura no cubo ao redor dos pés), `reposicaoPassoX/Y/Z` (deslocamento
+  entre baús consecutivos da fila) e `quantidadeReposicao` - todos com chave própria em
+  `apartirDeParametros`/`paraMapa`, PADRAO replica o layout de fila ao longo do eixo Z descrito pelo
+  responsável nesta sessão. A base é recalculada a cada execução a partir da posição real de pouso
+  (não gravada como coordenada absoluta no perfil), portátil entre servidores/contas.
+
+**Validação executada:** `mvnw test` (suíte completa, 1278 testes) limpo. As duas tests de troca de
+espada (`deveDesativarAMacroQuandoNaoHaEspadaSubstitutaNoBau`/`deveTrocarEspadaGastaPelaSubstitutaDoBau`)
+foram adaptadas: como `GerenciadorDeMkb` agora depende de `GuiaDeCaminho`/`SessaoDeJogo.caminhoAtual()`
+(só avançado por `MotorDeTick` em produção), os testes passaram a tickar manualmente o caminho ativo a
+cada iteração (mesmo padrão de `GuiaDeCaminhoTest.ticarAteFinalizarOuLimite`) e a rodar múltiplas
+chamadas de `executar()` até a operação de MKB se resolver, em vez de uma única chamada síncrona.
+
+**Riscos/limitações conhecidas:** ainda sem validação ao vivo contra um servidor real (offset/passo
+precisam ser calibrados manualmente por quem configurar o perfil `mobsimples`, valor padrão é só um
+palpite razoável). `GerenciadorDeMkbTest` dedicado continua pendente (mesma pendência da atualização
+anterior).
+
+**Próximo passo recomendado:** validar ao vivo contra um servidor real com uma MKB configurada;
+escrever `GerenciadorDeMkbTest`; avaliar migrar `TarefaMineracaoTrap`/`TarefaAutoFish` (mesmo padrão de
+baú de reposição/descarga) para `GerenciadorDeMkb` quando fizer sentido.
